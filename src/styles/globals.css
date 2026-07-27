@@ -1,0 +1,101 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --color-primary: #0129AC;
+    --color-secondary: #809EFC;
+    --color-surface: #E1ECFF;
+    --color-background: #FAFBFE;
+    --color-card: #FFFFFF;
+    --color-border: #E2E8F0;
+    --color-text-primary: #2E2E2E;
+    --color-text-secondary: #707070;
+    --color-success: #059669;
+    --color-warning: #D97706;
+    --color-danger: #DC2626;
+  }
+
+  .dark {
+    --color-primary: #809EFC;
+    --color-secondary: #809EFC;
+    --color-surface: rgba(128, 158, 252, 0.08);
+    --color-background: #0F1117;
+    --color-card: #1A1D27;
+    --color-border: #2A2D3A;
+    --color-text-primary: #E8E8ED;
+    --color-text-secondary: #8B8D98;
+    --color-success: #059669;
+    --color-warning: #D97706;
+    --color-danger: #DC2626;
+  }
+
+  html {
+    font-family: 'Poppins', system-ui, -apple-system, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    @apply bg-background dark:bg-background-dark text-text-primary dark:text-text-primary-dark;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+
+  * {
+    @apply border-border dark:border-border-dark;
+  }
+
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+}
+
+@layer utilities {
+  .shimmer {
+    background: linear-gradient(
+      90deg,
+      rgba(228, 228, 228, 0.4) 25%,
+      rgba(255, 255, 255, 0.7) 50%,
+      rgba(228, 228, 228, 0.4) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+  }
+
+  .dark .shimmer {
+    background: linear-gradient(
+      90deg,
+      rgba(42, 45, 58, 0.8) 25%,
+      rgba(60, 65, 80, 0.6) 50%,
+      rgba(42, 45, 58, 0.8) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+  }
+
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: #E2E8F0 transparent;
+  }
+
+  .dark .scrollbar-thin {
+    scrollbar-color: #2A2D3A transparent;
+  }
+
+  .card-base {
+    @apply bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-lg shadow-card;
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}

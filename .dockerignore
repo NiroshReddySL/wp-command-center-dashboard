@@ -1,0 +1,9 @@
+# Secrets must never enter image layers — inject at runtime
+.env
+.env.*
+!.env.example
+
+node_modules/
+dist/
+.vite/
+.DS_Store
