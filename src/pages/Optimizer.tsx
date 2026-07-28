@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { get, post } from '@/lib/api'
 import {
   ExternalLink, RefreshCw, X, Trash2, Search, Loader2, ChevronUp, ChevronDown, ChevronsUpDown,
-  SlidersHorizontal, Check,
+  SlidersHorizontal, Check, TrendingUp, TrendingDown, Minus, FileCheck2,
 } from 'lucide-react'
 import PageShell from '@/components/layout/PageShell'
 import QueryError from '@/components/ui/QueryError'
@@ -19,7 +19,6 @@ import Select from '@/components/ui/Select'
 import Pagination from '@/components/ui/Pagination'
 import SeoOpportunityCard, { type SeoOpportunity } from '@/components/domain/SeoOpportunityCard'
 import ContentScoreBar from '@/components/domain/ContentScoreBar'
-import SparkLine from '@/components/charts/SparkLine'
 import { useSiteContext } from '@/contexts/SiteContext'
 import {
   useContentHealth, useRescanPost, isPostGoneError, rescanErrorDetail,
@@ -60,6 +59,17 @@ function toggleInArray<T>(arr: T[], value: T): T[] {
   return arr.includes(value) ? arr.filter((v) => v !== value) : [...arr, value]
 }
 
+// ——— Internal-link relevance badge ——————————————————————————————
+// Tiers reflect InternalLinker's IDF-weighted score — the minimum to be
+// suggested at all is ~3 (see `_MIN_PAIR_SCORE` server-side), so anything
+// that low is already the weakest kind of match that qualifies.
+function relevanceTier(score: number | null): { label: string; variant: 'success' | 'info' | 'warning' } {
+  if (score == null) return { label: 'Related', variant: 'info' }
+  if (score >= 6) return { label: 'Strong match', variant: 'success' }
+  if (score >= 4) return { label: 'Good match', variant: 'info' }
+  return { label: 'Related', variant: 'warning' }
+}
+
 // ——— Sortable column header ————————————————————————————————
 function SortableHeader({
   label, field, activeSort, activeDir, onSort, className,
@@ -89,6 +99,32 @@ function SortableHeader({
         )}
       </button>
     </TableHead>
+  )
+}
+
+// ——— Traffic trend indicator ————————————————————————————————
+function getTrafficTrend(trend: number[]): { direction: 'up' | 'down' | 'flat' | 'none'; pct: number } {
+  if (!trend || trend.length < 2) return { direction: 'none', pct: 0 }
+  const first = trend[0]
+  const last = trend[trend.length - 1]
+  const diff = last - first
+  if (diff === 0) return { direction: 'flat', pct: 0 }
+  const pct = first === 0 ? 100 : Math.round((diff / first) * 100)
+  return { direction: diff > 0 ? 'up' : 'down', pct }
+}
+
+function TrendIndicator({ trend }: { trend: number[] }) {
+  const { direction, pct } = getTrafficTrend(trend)
+  if (direction === 'none') {
+    return <span className="text-[11px] text-text-secondary dark:text-text-secondary-dark">—</span>
+  }
+  const Icon = direction === 'up' ? TrendingUp : direction === 'down' ? TrendingDown : Minus
+  const colorClass = direction === 'up' ? 'text-success' : direction === 'down' ? 'text-danger' : 'text-text-secondary dark:text-text-secondary-dark'
+  return (
+    <div className={cn('flex items-center gap-1 text-[11px] font-medium', colorClass)}>
+      <Icon className="h-3 w-3" />
+      <span>{direction === 'flat' ? '0%' : `${pct > 0 ? '+' : ''}${pct}%`}</span>
+    </div>
   )
 }
 
@@ -276,7 +312,11 @@ interface InternalLinkSuggestion {
   target_title: string
   target_url: string
   anchor_text: string
+  anchor_source: 'search_query' | 'source_text' | 'title'
+  anchor_impressions: number | null
+  anchor_clicks: number | null
   shared_keywords: string[]
+  relevance_score: number | null
 }
 
 // ——— SEO Detail Modal ————————————————————————————————————
@@ -524,7 +564,10 @@ export default function Optimizer() {
 
   const { data: seoOpps, isLoading: seoLoading, isError: seoError, refetch: refetchSeo } = useQuery({
     queryKey: ['seo-opportunities', selectedSiteId],
-    queryFn: () => get<SeoOpportunityFull[]>('/optimizer/seo-opportunities', selectedSiteId ? { site_id: selectedSiteId } : undefined),
+    // limit raised to the API's max (500) — the default (200) was silently
+    // truncating sites with more open SEO alerts than that, with no
+    // indication in the UI that anything was hidden.
+    queryFn: () => get<SeoOpportunityFull[]>('/optimizer/seo-opportunities', { limit: 500, ...(selectedSiteId ? { site_id: selectedSiteId } : {}) }),
     staleTime: refreshing ? 0 : 60_000,
     refetchInterval: refreshing ? 5_000 : false,
   })
@@ -546,7 +589,7 @@ export default function Optimizer() {
 
   const { data: internalLinks, isLoading: linksLoading, isError: linksError, refetch: refetchLinks } = useQuery({
     queryKey: ['internal-links', selectedSiteId],
-    queryFn: () => get<InternalLinkSuggestion[]>('/optimizer/internal-links', selectedSiteId ? { site_id: selectedSiteId } : undefined),
+    queryFn: () => get<InternalLinkSuggestion[]>('/optimizer/internal-links', { limit: 500, ...(selectedSiteId ? { site_id: selectedSiteId } : {}) }),
     staleTime: refreshing ? 0 : 60_000,
     refetchInterval: refreshing ? 5_000 : false,
   })
@@ -845,13 +888,7 @@ export default function Optimizer() {
                         </TableCell>
                         <TableCell className="text-[12px]">{formatNumber(post.traffic_30d)}</TableCell>
                         <TableCell>
-                          {post.traffic_trend?.length > 1 ? (
-                            <SparkLine
-                              data={post.traffic_trend}
-                              color={post.traffic_trend[post.traffic_trend.length - 1] >= post.traffic_trend[0] ? '#059669' : '#DC2626'}
-                              width={60} height={24}
-                            />
-                          ) : <span className="text-[11px] text-text-secondary dark:text-text-secondary-dark">—</span>}
+                          <TrendIndicator trend={post.traffic_trend} />
                         </TableCell>
                         <TableCell>
                           {(post.issues ?? []).length > 0 ? (
@@ -915,11 +952,20 @@ export default function Optimizer() {
           ) : (
             <>
               <div className="flex flex-col gap-3">
-                {linksSlice.map((link) => (
+                {linksSlice.map((link) => {
+                  const tier = relevanceTier(link.relevance_score)
+                  return (
                   <div key={link.id} className="bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-lg p-4">
-                    <p className="text-[11px] font-semibold text-text-secondary dark:text-text-secondary-dark uppercase tracking-wide mb-3">
-                      Add a link inside this post
-                    </p>
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="text-[11px] font-semibold text-text-secondary dark:text-text-secondary-dark uppercase tracking-wide">
+                        Add a link inside this post
+                      </p>
+                      <span title={link.relevance_score != null ? `Relevance score: ${link.relevance_score.toFixed(1)}` : undefined}>
+                        <Badge variant={tier.variant} className="text-[10px]">
+                          {tier.label}
+                        </Badge>
+                      </span>
+                    </div>
                     <div className="flex items-start gap-3 mb-3">
                       <div className="flex-shrink-0 w-1.5 h-1.5 rounded-full bg-warning mt-1.5" />
                       <div className="flex-1 min-w-0">
@@ -932,12 +978,32 @@ export default function Optimizer() {
                         </Button>
                       </a>
                     </div>
-                    <div className="flex items-center gap-2 bg-surface dark:bg-surface-dark rounded-md px-3 py-2 mb-3">
+                    <div className="flex items-center gap-2 bg-surface dark:bg-surface-dark rounded-md px-3 py-2 mb-3 flex-wrap">
                       <span className="text-[12px] text-text-secondary dark:text-text-secondary-dark">Link the phrase</span>
                       <code className="text-[12px] font-semibold text-primary dark:text-primary-dark bg-primary/8 px-2 py-0.5 rounded">
                         {link.anchor_text}
                       </code>
                       <span className="text-[12px] text-text-secondary dark:text-text-secondary-dark">to</span>
+                      {link.anchor_source === 'search_query' && (
+                        <span
+                          className="ml-auto flex items-center gap-1 text-[10px] font-medium text-success"
+                          title="A real Google Search Console query for the target page, confirmed present in this exact article's own text."
+                        >
+                          <Search className="h-3 w-3" />
+                          Real search term
+                          {link.anchor_impressions != null && ` · ${formatNumber(link.anchor_impressions)} impressions`}
+                          {link.anchor_clicks != null && link.anchor_clicks > 0 && ` · ${formatNumber(link.anchor_clicks)} clicks`}
+                        </span>
+                      )}
+                      {link.anchor_source === 'source_text' && (
+                        <span
+                          className="ml-auto flex items-center gap-1 text-[10px] font-medium text-primary dark:text-primary-dark"
+                          title="This exact phrase was verified present in the source article's own text."
+                        >
+                          <FileCheck2 className="h-3 w-3" />
+                          Found in article
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-start gap-3">
                       <div className="flex-shrink-0 w-1.5 h-1.5 rounded-full bg-success mt-1.5" />
@@ -953,7 +1019,7 @@ export default function Optimizer() {
                     </div>
                     {link.shared_keywords.length > 0 && (
                       <div className="flex items-center gap-1.5 mt-3 pt-3 border-t border-border dark:border-border-dark">
-                        <span className="text-[10px] text-text-secondary dark:text-text-secondary-dark">Related topics:</span>
+                        <span className="text-[10px] text-text-secondary dark:text-text-secondary-dark">Matched on:</span>
                         {link.shared_keywords.map((kw) => (
                           <span key={kw} className="text-[10px] bg-surface dark:bg-surface-dark px-1.5 py-0.5 rounded text-text-secondary dark:text-text-secondary-dark">
                             {kw}
@@ -962,7 +1028,8 @@ export default function Optimizer() {
                       </div>
                     )}
                   </div>
-                ))}
+                  )
+                })}
               </div>
               <Pagination page={linksPage} total={internalLinks.length} pageSize={LINKS_PAGE_SIZE} onPageChange={setLinksPage} />
             </>
