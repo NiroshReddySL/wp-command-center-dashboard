@@ -1,4 +1,5 @@
 import { ReactNode } from 'react'
+import { Link } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 
 interface PageShellProps {
@@ -25,9 +26,18 @@ export default function PageShell({ title, subtitle, breadcrumb, actions, childr
                   {i > 0 && (
                     <span className="text-text-secondary dark:text-text-secondary-dark text-[11px]">/</span>
                   )}
-                  <span className="text-[11px] text-text-secondary dark:text-text-secondary-dark">
-                    {crumb.label}
-                  </span>
+                  {crumb.href ? (
+                    <Link
+                      to={crumb.href}
+                      className="text-[11px] text-text-secondary dark:text-text-secondary-dark hover:text-primary dark:hover:text-primary-dark hover:underline"
+                    >
+                      {crumb.label}
+                    </Link>
+                  ) : (
+                    <span className="text-[11px] text-text-secondary dark:text-text-secondary-dark">
+                      {crumb.label}
+                    </span>
+                  )}
                 </span>
               ))}
             </nav>

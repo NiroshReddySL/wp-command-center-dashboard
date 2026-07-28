@@ -1,6 +1,11 @@
+import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { ArrowLeft, RefreshCw, ExternalLink, ExternalLink as LinkIcon, Sparkles, Building2, Users, Mic2, Globe } from 'lucide-react'
+import { motion } from 'framer-motion'
+import {
+  ArrowLeft, ArrowRight, RefreshCw, ExternalLink, ExternalLink as LinkIcon, Sparkles, Building2, Users, Mic2,
+  Globe, AlertTriangle, FileText, Gauge, Clock, TrendingUp, TrendingDown,
+} from 'lucide-react'
 import PageShell from '@/components/layout/PageShell'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/Tabs'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card'
@@ -9,13 +14,27 @@ import Skeleton from '@/components/ui/Skeleton'
 import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
 import StatusDot from '@/components/ui/StatusDot'
+import Pagination from '@/components/ui/Pagination'
+import MetricCard from '@/components/ui/MetricCard'
+import HealthRing from '@/components/charts/HealthRing'
 import ContentScoreBar from '@/components/domain/ContentScoreBar'
 import AlertFeedItem from '@/components/domain/AlertFeedItem'
 import { useSiteDetail, useSyncSite } from '@/hooks/useSites'
 import { post as apiPost } from '@/lib/api'
 import { useAlerts, useAcknowledgeAlert, useDismissAlert } from '@/hooks/useAlerts'
 import { get } from '@/lib/api'
-import { cn, getHealthColor, timeAgo, formatNumber, formatMs } from '@/lib/utils'
+import { useSiteContext } from '@/contexts/SiteContext'
+import { cn, timeAgo, formatNumber, formatMs } from '@/lib/utils'
+
+const ALERTS_PAGE_SIZE = 15
+const CONTENT_PREVIEW_SIZE = 10
+const ALERT_SEVERITIES = ['critical', 'warning', 'info'] as const
+
+const stagger = { animate: { transition: { staggerChildren: 0.06 } } }
+const fadeUp = {
+  initial: { opacity: 0, y: 8 },
+  animate: { opacity: 1, y: 0, transition: { duration: 0.2, ease: 'easeOut' } },
+}
 
 interface PerfSnapshot {
   id: string
@@ -57,6 +76,27 @@ interface SiteContextResponse {
   site_id: string
   context: SiteContext
   analyzed_at: string | null
+}
+
+function StatusPill({ color, label }: { color: string; label: string }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-medium text-white ring-1 ring-inset ring-white/15 backdrop-blur-sm capitalize">
+      <span className={`h-1.5 w-1.5 rounded-full ${color}`} />
+      {label}
+    </span>
+  )
+}
+
+// ——— Small point-delta indicator (raw points, not a percentage — Performance tab only) ———
+function ScoreDelta({ delta }: { delta: number }) {
+  if (delta === 0) return null
+  const pos = delta > 0
+  return (
+    <span className={cn('inline-flex items-center gap-0.5 text-[10px] font-medium', pos ? 'text-success' : 'text-danger')}>
+      {pos ? <TrendingUp className="h-2.5 w-2.5" /> : <TrendingDown className="h-2.5 w-2.5" />}
+      {Math.abs(delta)}
+    </span>
+  )
 }
 
 function SiteContextCard({ siteId }: { siteId: string }) {
@@ -208,11 +248,20 @@ function SiteContextCard({ siteId }: { siteId: string }) {
 export default function SiteDetail() {
   const { siteId } = useParams<{ siteId: string }>()
   const navigate = useNavigate()
+  const { setSelectedSiteId } = useSiteContext()
   const { data: site, isLoading } = useSiteDetail(siteId ?? '')
-  const { data: alerts } = useAlerts({ site_id: siteId })
+  // No `agent` filter — this page needs the site's FULL alert history across
+  // every agent, not just Watchdog's. `limit` raised to the API's max so a
+  // busy site's alerts aren't silently truncated before pagination even sees them.
+  const { data: alerts } = useAlerts({ site_id: siteId, limit: 500 })
+  const alertsAtCap = (alerts?.length ?? 0) >= 500
   const sync = useSyncSite()
   const acknowledge = useAcknowledgeAlert()
   const dismiss = useDismissAlert()
+
+  const [alertSeverity, setAlertSeverity] = useState<'' | (typeof ALERT_SEVERITIES)[number]>('')
+  const [alertPage, setAlertPage] = useState(1)
+  useEffect(() => { setAlertPage(1) }, [alertSeverity])
 
   const { data: performance, isLoading: perfLoading } = useQuery({
     queryKey: ['site-performance', siteId],
@@ -231,7 +280,7 @@ export default function SiteDetail() {
   if (isLoading) {
     return (
       <div className="flex flex-col gap-6 p-6">
-        <Skeleton className="h-8 w-48" />
+        <Skeleton className="h-[180px] w-full rounded-xl" />
         <div className="grid grid-cols-4 gap-4">
           {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-28 w-full rounded-lg" />)}
         </div>
@@ -249,9 +298,11 @@ export default function SiteDetail() {
     )
   }
 
-  const healthColor = getHealthColor(site.health_score)
   const openAlerts = alerts?.filter((a) => a.status === 'open') ?? []
   const criticalCount = openAlerts.filter((a) => a.severity === 'critical').length
+
+  const filteredOpenAlerts = alertSeverity ? openAlerts.filter((a) => a.severity === alertSeverity) : openAlerts
+  const alertSlice = filteredOpenAlerts.slice((alertPage - 1) * ALERTS_PAGE_SIZE, alertPage * ALERTS_PAGE_SIZE)
 
   // Group performance snapshots by page
   const perfByPage = (performance ?? []).reduce<Record<string, PerfSnapshot[]>>((acc, s) => {
@@ -260,86 +311,141 @@ export default function SiteDetail() {
     return acc
   }, {})
 
-  // Latest snapshot per page
+  // Latest snapshot per page, plus up to 5 most-recent for a trend delta
   const latestPerPage = Object.entries(perfByPage).map(([url, snaps]) => ({
     url,
     latest: snaps[0],
     history: snaps.slice(0, 5),
   }))
 
+  const contentTotal = site.content_count ?? content?.length ?? 0
+  const contentPreview = content?.slice(0, CONTENT_PREVIEW_SIZE) ?? []
+
+  function viewFullContentHealth() {
+    setSelectedSiteId(site!.id)
+    navigate('/optimizer?tab=content')
+  }
+
   return (
-    <PageShell
-      title={site.name}
-      subtitle={site.url}
-      breadcrumb={[{ label: 'Dashboard', href: '/' }, { label: site.name }]}
-      actions={
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={() => navigate(-1)} className="flex items-center gap-1.5">
-            <ArrowLeft className="h-3.5 w-3.5" /> Back
-          </Button>
-          <a href={site.url} target="_blank" rel="noopener noreferrer">
-            <Button variant="secondary" size="sm" className="flex items-center gap-1.5">
-              <ExternalLink className="h-3.5 w-3.5" /> Visit site
-            </Button>
-          </a>
-          <Button
-            variant="secondary"
-            size="sm"
-            loading={sync.isPending}
-            onClick={() => {
-              if (confirm('This will delete all posts, alerts, performance data, and review items for this site, then re-sync from scratch. Continue?')) {
-                sync.mutate({ id: site.id, flush: true })
-              }
-            }}
-            className="flex items-center gap-1.5"
-          >
-            <RefreshCw className="h-3.5 w-3.5" /> Flush & Sync
-          </Button>
-          <Button
-            variant="primary"
-            size="sm"
-            loading={sync.isPending}
-            onClick={() => sync.mutate({ id: site.id })}
-            className="flex items-center gap-1.5"
-          >
-            <RefreshCw className="h-3.5 w-3.5" /> Sync now
-          </Button>
-        </div>
-      }
-    >
-      {/* Top stats */}
-      <div className="grid grid-cols-4 gap-4">
-        <Card className="flex flex-col gap-2 p-5">
-          <span className="text-[11px] font-medium text-text-secondary dark:text-text-secondary-dark uppercase tracking-wide">Health Score</span>
-          <span className={`text-[32px] font-bold leading-none ${healthColor}`}>{site.health_score}</span>
-          <span className="text-[11px] text-text-secondary dark:text-text-secondary-dark">/100</span>
-        </Card>
+    <PageShell breadcrumb={[{ label: 'Dashboard', href: '/' }, { label: site.name }]}>
+      {/* Hero band */}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, ease: 'easeOut' }}
+        className="relative overflow-hidden rounded-xl bg-gradient-to-br from-primary via-primary to-secondary p-6 shadow-card"
+      >
+        <div className="pointer-events-none absolute -right-16 -top-20 h-64 w-64 rounded-full bg-white/10 blur-3xl" />
+        <div className="pointer-events-none absolute -bottom-24 left-1/3 h-56 w-56 rounded-full bg-secondary/30 blur-3xl" />
 
-        <Card className="flex flex-col gap-2 p-5">
-          <span className="text-[11px] font-medium text-text-secondary dark:text-text-secondary-dark uppercase tracking-wide">Status</span>
-          <div className="flex items-center gap-2 mt-1">
-            <StatusDot status={site.status === 'active' ? 'healthy' : site.status === 'error' ? 'critical' : 'inactive'} pulse={site.status === 'error'} />
-            <span className="text-[15px] font-semibold text-text-primary dark:text-text-primary-dark capitalize">{site.status}</span>
+        <div className="relative flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-wider text-white/70">
+              <Globe className="h-3.5 w-3.5" />
+              Connected Site
+            </div>
+            <h1 className="mt-2 text-[24px] font-semibold leading-tight text-white truncate">{site.name}</h1>
+            <a
+              href={site.url} target="_blank" rel="noopener noreferrer"
+              className="mt-1 inline-flex items-center gap-1 text-[13px] text-white/80 hover:text-white hover:underline"
+            >
+              {site.url} <LinkIcon className="h-3 w-3" />
+            </a>
+
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <StatusPill
+                color={site.status === 'active' ? 'bg-emerald-300' : site.status === 'error' ? 'bg-rose-300' : 'bg-white/40'}
+                label={site.status}
+              />
+              {criticalCount > 0 && <StatusPill color="bg-rose-300" label={`${criticalCount} critical`} />}
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-medium text-white ring-1 ring-inset ring-white/15 backdrop-blur-sm">
+                <Clock className="h-3 w-3" />
+                Synced {site.last_synced_at ? timeAgo(site.last_synced_at) : 'never'}
+              </span>
+            </div>
+
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <Button
+                variant="ghost" size="sm" onClick={() => navigate(-1)}
+                className="flex items-center gap-1.5 bg-white/10 text-white border border-white/20 hover:bg-white/20 hover:text-white"
+              >
+                <ArrowLeft className="h-3.5 w-3.5" /> Back
+              </Button>
+              <a href={site.url} target="_blank" rel="noopener noreferrer">
+                <Button
+                  variant="ghost" size="sm"
+                  className="flex items-center gap-1.5 bg-white/10 text-white border border-white/20 hover:bg-white/20 hover:text-white"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" /> Visit site
+                </Button>
+              </a>
+              <Button
+                variant="ghost" size="sm" loading={sync.isPending}
+                onClick={() => {
+                  if (confirm('This will delete all posts, alerts, performance data, and review items for this site, then re-sync from scratch. Continue?')) {
+                    sync.mutate({ id: site.id, flush: true })
+                  }
+                }}
+                className="flex items-center gap-1.5 bg-white/10 text-white border border-white/20 hover:bg-white/20 hover:text-white"
+              >
+                <RefreshCw className="h-3.5 w-3.5" /> Flush & Sync
+              </Button>
+              <Button
+                variant="ghost" size="sm" loading={sync.isPending}
+                onClick={() => sync.mutate({ id: site.id })}
+                className="flex items-center gap-1.5 bg-white text-primary border border-white hover:bg-white/90"
+              >
+                <RefreshCw className="h-3.5 w-3.5" /> Sync now
+              </Button>
+            </div>
           </div>
-        </Card>
 
-        <Card className="flex flex-col gap-2 p-5">
-          <span className="text-[11px] font-medium text-text-secondary dark:text-text-secondary-dark uppercase tracking-wide">Open Issues</span>
-          <span className={`text-[32px] font-bold leading-none ${(site.issues_count ?? 0) > 0 ? 'text-danger' : 'text-success'}`}>
-            {site.issues_count ?? 0}
-          </span>
-          {criticalCount > 0 && (
-            <span className="text-[11px] text-danger">{criticalCount} critical</span>
-          )}
-        </Card>
+          <div className="flex flex-shrink-0 flex-col items-center">
+            <HealthRing value={site.health_score}>
+              <span className="text-[34px] font-bold leading-none text-white">{site.health_score}</span>
+              <span className="mt-1 text-[10px] font-medium uppercase tracking-wider text-white/70">Health</span>
+            </HealthRing>
+          </div>
+        </div>
+      </motion.div>
 
-        <Card className="flex flex-col gap-2 p-5">
-          <span className="text-[11px] font-medium text-text-secondary dark:text-text-secondary-dark uppercase tracking-wide">Last Synced</span>
-          <span className="text-[15px] font-semibold text-text-primary dark:text-text-primary-dark">
-            {site.last_synced_at ? timeAgo(site.last_synced_at) : 'Never'}
-          </span>
-        </Card>
-      </div>
+      {/* Stat row */}
+      <motion.div variants={stagger} initial="initial" animate="animate" className="grid grid-cols-4 gap-4">
+        <motion.div variants={fadeUp}>
+          <MetricCard
+            label="Open Issues"
+            value={site.issues_count ?? 0}
+            icon={<AlertTriangle className="h-4 w-4" />}
+            accent={(site.issues_count ?? 0) > 20 ? 'danger' : (site.issues_count ?? 0) > 0 ? 'warning' : 'success'}
+          >
+            {criticalCount > 0 && <span className="text-[11px] text-danger font-medium">{criticalCount} critical</span>}
+          </MetricCard>
+        </motion.div>
+        <motion.div variants={fadeUp}>
+          <MetricCard
+            label="Content Posts"
+            value={formatNumber(contentTotal)}
+            icon={<FileText className="h-4 w-4" />}
+            accent="primary"
+          />
+        </motion.div>
+        <motion.div variants={fadeUp}>
+          <MetricCard
+            label="Avg Speed Score"
+            value={site.speed_score ?? '—'}
+            icon={<Gauge className="h-4 w-4" />}
+            accent={site.speed_score == null ? undefined : site.speed_score >= 85 ? 'success' : site.speed_score >= 58 ? 'warning' : 'danger'}
+          />
+        </motion.div>
+        <motion.div variants={fadeUp}>
+          <MetricCard
+            label="Last Synced"
+            value={site.last_synced_at ? timeAgo(site.last_synced_at) : 'Never'}
+            icon={<Clock className="h-4 w-4" />}
+            accent="secondary"
+          />
+        </motion.div>
+      </motion.div>
 
       {/* Tabs */}
       <Tabs defaultValue="overview">
@@ -353,8 +459,8 @@ export default function SiteDetail() {
           </TabsTrigger>
           <TabsTrigger value="content">
             Content
-            {(content?.length ?? 0) > 0 && (
-              <Badge variant="default" className="ml-1.5">{content?.length}</Badge>
+            {contentTotal > 0 && (
+              <Badge variant="default" className="ml-1.5">{formatNumber(contentTotal)}</Badge>
             )}
           </TabsTrigger>
           <TabsTrigger value="alerts">
@@ -402,13 +508,6 @@ export default function SiteDetail() {
                       : <p className="text-[12px] text-text-secondary dark:text-text-secondary-dark">No posts analyzed yet</p>
                     }
                   </div>
-                  <div>
-                    <p className="text-[11px] text-text-secondary dark:text-text-secondary-dark mb-1">Avg Speed Score</p>
-                    {site.speed_score != null
-                      ? <Badge variant={site.speed_score >= 85 ? 'success' : site.speed_score >= 58 ? 'warning' : 'critical'}>{site.speed_score}</Badge>
-                      : <span className="text-[12px] text-text-secondary dark:text-text-secondary-dark">Run agents to measure</span>
-                    }
-                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -424,7 +523,7 @@ export default function SiteDetail() {
                   </div>
                 ) : (
                   <div className="flex flex-col gap-2">
-                    {(['critical', 'warning', 'info'] as const).map((sev) => {
+                    {ALERT_SEVERITIES.map((sev) => {
                       const count = openAlerts.filter((a) => a.severity === sev).length
                       if (!count) return null
                       return (
@@ -508,7 +607,7 @@ export default function SiteDetail() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {latestPerPage.map(({ url, latest }) => {
+                    {latestPerPage.map(({ url, latest, history }) => {
                       const lcpS = latest.lcp / 1000
                       const lcpOk = latest.lcp <= 2500
                       const lcpWarn = latest.lcp <= 4000
@@ -518,6 +617,8 @@ export default function SiteDetail() {
                       const tbtWarn = latest.fid <= 600
                       const ttfbOk = latest.ttfb <= 800
                       const ttfbWarn = latest.ttfb <= 1800
+                      const oldest = history[history.length - 1]
+                      const speedDelta = history.length > 1 ? latest.speed_score - oldest.speed_score : 0
 
                       return (
                         <TableRow key={url}>
@@ -529,9 +630,12 @@ export default function SiteDetail() {
                             </a>
                           </TableCell>
                           <TableCell>
-                            <Badge variant={latest.speed_score >= 90 ? 'success' : latest.speed_score >= 50 ? 'warning' : 'critical'}>
-                              {latest.speed_score}
-                            </Badge>
+                            <div className="flex items-center gap-1.5">
+                              <Badge variant={latest.speed_score >= 90 ? 'success' : latest.speed_score >= 50 ? 'warning' : 'critical'}>
+                                {latest.speed_score}
+                              </Badge>
+                              <ScoreDelta delta={speedDelta} />
+                            </div>
                           </TableCell>
                           <TableCell>
                             <span className={`text-[12px] ${lcpOk ? 'text-success' : lcpWarn ? 'text-warning' : 'text-danger'}`}>
@@ -596,72 +700,131 @@ export default function SiteDetail() {
               </CardContent>
             </Card>
           ) : (
-            <Card className="p-0">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Post</TableHead>
-                    <TableHead>Health Score</TableHead>
-                    <TableHead>Traffic (30d)</TableHead>
-                    <TableHead>Top Issue</TableHead>
-                    <TableHead>Last Analyzed</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {content.map((post) => (
-                    <TableRow key={post.id}>
-                      <TableCell>
-                        <a href={post.url} target="_blank" rel="noopener noreferrer"
-                          className="text-[12px] font-medium text-text-primary dark:text-text-primary-dark hover:text-primary dark:hover:text-primary-dark truncate max-w-[280px] block">
-                          {post.title}
-                        </a>
-                      </TableCell>
-                      <TableCell>
-                        <div className="w-28">
-                          <ContentScoreBar score={post.health_score} showLabel />
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-[12px] text-text-primary dark:text-text-primary-dark">
-                        {post.traffic_30d > 0 ? formatNumber(post.traffic_30d) : <span className="text-text-secondary dark:text-text-secondary-dark">—</span>}
-                      </TableCell>
-                      <TableCell className="max-w-[200px]">
-                        {post.issues[0]
-                          ? <span className="text-[11px] text-warning truncate block">{post.issues[0]}</span>
-                          : <span className="text-[11px] text-success">No issues</span>
-                        }
-                      </TableCell>
-                      <TableCell className="text-[11px] text-text-secondary dark:text-text-secondary-dark">
-                        {post.last_analyzed_at ? timeAgo(post.last_analyzed_at) : '—'}
-                      </TableCell>
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-[14px] font-semibold text-text-primary dark:text-text-primary-dark">Needs Attention</h3>
+                  <p className="text-[12px] text-text-secondary dark:text-text-secondary-dark">
+                    {contentPreview.length} of {formatNumber(contentTotal)} posts · lowest health score first
+                  </p>
+                </div>
+                <Button variant="secondary" size="sm" onClick={viewFullContentHealth} className="flex items-center gap-1.5">
+                  View full Content Health <ArrowRight className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+              <Card className="p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Post</TableHead>
+                      <TableHead>Health Score</TableHead>
+                      <TableHead>Traffic (30d)</TableHead>
+                      <TableHead>Top Issue</TableHead>
+                      <TableHead>Last Analyzed</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </Card>
+                  </TableHeader>
+                  <TableBody>
+                    {contentPreview.map((post) => (
+                      <TableRow key={post.id}>
+                        <TableCell>
+                          <a href={post.url} target="_blank" rel="noopener noreferrer"
+                            className="text-[12px] font-medium text-text-primary dark:text-text-primary-dark hover:text-primary dark:hover:text-primary-dark truncate max-w-[280px] block">
+                            {post.title}
+                          </a>
+                        </TableCell>
+                        <TableCell>
+                          <div className="w-28">
+                            <ContentScoreBar score={post.health_score} showLabel />
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-[12px] text-text-primary dark:text-text-primary-dark">
+                          {post.traffic_30d > 0 ? formatNumber(post.traffic_30d) : <span className="text-text-secondary dark:text-text-secondary-dark">—</span>}
+                        </TableCell>
+                        <TableCell className="max-w-[200px]">
+                          {post.issues[0]
+                            ? <span className="text-[11px] text-warning truncate block">{post.issues[0]}</span>
+                            : <span className="text-[11px] text-success">No issues</span>
+                          }
+                        </TableCell>
+                        <TableCell className="text-[11px] text-text-secondary dark:text-text-secondary-dark">
+                          {post.last_analyzed_at ? timeAgo(post.last_analyzed_at) : '—'}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </Card>
+            </div>
           )}
         </TabsContent>
 
         {/* ——— Alerts ——— */}
         <TabsContent value="alerts">
-          <div className="bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-lg overflow-hidden">
-            {openAlerts.length === 0 ? (
-              <p className="text-center py-10 text-[13px] text-text-secondary dark:text-text-secondary-dark">
-                No open alerts for this site.
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setAlertSeverity('')}
+                className={cn(
+                  'px-3 py-1.5 text-[12px] font-medium rounded-lg border transition-colors',
+                  alertSeverity === ''
+                    ? 'bg-primary text-white border-primary'
+                    : 'bg-card dark:bg-card-dark border-border dark:border-border-dark text-text-secondary dark:text-text-secondary-dark hover:border-primary/50'
+                )}
+              >
+                All ({openAlerts.length})
+              </button>
+              {ALERT_SEVERITIES.map((sev) => {
+                const count = openAlerts.filter((a) => a.severity === sev).length
+                if (!count) return null
+                return (
+                  <button
+                    key={sev}
+                    onClick={() => setAlertSeverity(sev)}
+                    className={cn(
+                      'px-3 py-1.5 text-[12px] font-medium rounded-lg border transition-colors capitalize',
+                      alertSeverity === sev
+                        ? 'bg-primary text-white border-primary'
+                        : 'bg-card dark:bg-card-dark border-border dark:border-border-dark text-text-secondary dark:text-text-secondary-dark hover:border-primary/50'
+                    )}
+                  >
+                    {sev} ({count})
+                  </button>
+                )
+              })}
+            </div>
+
+            <div className="bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-lg overflow-hidden">
+              {openAlerts.length === 0 ? (
+                <p className="text-center py-10 text-[13px] text-text-secondary dark:text-text-secondary-dark">
+                  No open alerts for this site.
+                </p>
+              ) : filteredOpenAlerts.length === 0 ? (
+                <p className="text-center py-10 text-[13px] text-text-secondary dark:text-text-secondary-dark">
+                  No {alertSeverity} alerts for this site.
+                </p>
+              ) : (
+                <div className="divide-y divide-border dark:divide-border-dark">
+                  {alertSlice.map((alert) => (
+                    <AlertFeedItem
+                      key={alert.id}
+                      alert={alert}
+                      showSite={false}
+                      onAction={(id, action) => {
+                        if (action === 'dismiss') dismiss.mutate(id)
+                        else acknowledge.mutate(id)
+                      }}
+                    />
+                  ))}
+                </div>
+              )}
+            </div>
+            {filteredOpenAlerts.length > ALERTS_PAGE_SIZE && (
+              <Pagination page={alertPage} total={filteredOpenAlerts.length} pageSize={ALERTS_PAGE_SIZE} onPageChange={setAlertPage} />
+            )}
+            {alertsAtCap && (
+              <p className="text-[11px] text-text-secondary dark:text-text-secondary-dark text-center">
+                Showing the most recent 500 alerts for this site.
               </p>
-            ) : (
-              <div className="divide-y divide-border dark:divide-border-dark">
-                {openAlerts.map((alert) => (
-                  <AlertFeedItem
-                    key={alert.id}
-                    alert={alert}
-                    showSite={false}
-                    onAction={(id, action) => {
-                      if (action === 'dismiss') dismiss.mutate(id)
-                      else acknowledge.mutate(id)
-                    }}
-                  />
-                ))}
-              </div>
             )}
           </div>
         </TabsContent>

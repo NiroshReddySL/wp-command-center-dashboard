@@ -12,6 +12,7 @@ export interface Site {
   issues_count?: number
   speed_score?: number
   content_freshness?: number
+  content_count?: number
 }
 
 export interface CreateSitePayload {
