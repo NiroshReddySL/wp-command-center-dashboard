@@ -1,9 +1,20 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { get, post } from '@/lib/api'
 
+export type TrafficMetric = 'pageviews' | 'sessions' | 'users' | 'bounce_rate' | 'avg_session_duration'
+
+export const TRAFFIC_METRIC_OPTIONS: { value: TrafficMetric; label: string }[] = [
+  { value: 'pageviews', label: 'Pageviews' },
+  { value: 'sessions', label: 'Sessions' },
+  { value: 'users', label: 'Users' },
+]
+
 export interface TrafficSummary {
   site_id: string
   site_name: string
+  snapshot_date: string
+  is_stale: boolean
+  has_comparison: boolean
   pageviews_today: number
   pageviews_yesterday: number
   change_pct: number
@@ -57,10 +68,10 @@ export function useTrafficSummary(siteId?: string, fastPoll = false) {
   })
 }
 
-export function useTrafficTrend(siteId?: string, days = 30) {
+export function useTrafficTrend(siteId?: string, days = 30, metric: TrafficMetric = 'pageviews') {
   return useQuery({
-    queryKey: ['traffic-trend', siteId, days],
-    queryFn: () => get<TrendPoint[]>('/traffic/trend', { days, ...(siteId ? { site_id: siteId } : {}) }),
+    queryKey: ['traffic-trend', siteId, days, metric],
+    queryFn: () => get<TrendPoint[]>('/traffic/trend', { days, metric, ...(siteId ? { site_id: siteId } : {}) }),
     staleTime: 60_000,
   })
 }
@@ -82,11 +93,20 @@ export function useTrafficAlerts(siteId?: string) {
   })
 }
 
-export function useTopPages(siteId?: string, limit = 10) {
+export interface TopPage {
+  path?: string
+  url?: string
+  title?: string
+  views: number
+  site_id: string
+  site_name: string
+}
+
+export function useTopPages(siteId?: string, days = 30, limit = 10) {
   return useQuery({
-    queryKey: ['top-pages', siteId, limit],
-    queryFn: () => get<{ path?: string; url?: string; title?: string; views: number }[]>(
-      '/traffic/top-pages', { limit, ...(siteId ? { site_id: siteId } : {}) }
+    queryKey: ['top-pages', siteId, days, limit],
+    queryFn: () => get<TopPage[]>(
+      '/traffic/top-pages', { days, limit, ...(siteId ? { site_id: siteId } : {}) }
     ),
     staleTime: 60_000,
   })
@@ -98,10 +118,10 @@ export interface GeoBreakdown {
   cities: { city: string; country: string; views: number }[]
 }
 
-export function useGeoBreakdown(siteId?: string) {
+export function useGeoBreakdown(siteId?: string, days = 30) {
   return useQuery({
-    queryKey: ['traffic-geo', siteId],
-    queryFn: () => get<GeoBreakdown>('/traffic/geo', siteId ? { site_id: siteId } : undefined),
+    queryKey: ['traffic-geo', siteId, days],
+    queryFn: () => get<GeoBreakdown>('/traffic/geo', { days, ...(siteId ? { site_id: siteId } : {}) }),
     staleTime: 60_000,
   })
 }
