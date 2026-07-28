@@ -121,10 +121,29 @@ function GoogleIntegrationCard() {
   const qc = useQueryClient()
   const { data: status, isLoading } = useGoogleStatus()
   const { data: sites } = useSites()
+  const [refreshError, setRefreshError] = useState('')
+  const [refreshOk, setRefreshOk] = useState(false)
 
   const disconnect = useMutation({
     mutationFn: () => del<void>('/auth/google'),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['google-status'] }),
+  })
+
+  const refresh = useMutation({
+    mutationFn: () => post<{ status: string; message: string }>('/auth/google/refresh'),
+    onSuccess: () => {
+      setRefreshError('')
+      setRefreshOk(true)
+      qc.invalidateQueries({ queryKey: ['google-status'] })
+      setTimeout(() => setRefreshOk(false), 4000)
+    },
+    onError: (err: unknown) => {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setRefreshError(msg ?? 'Refresh failed — please reconnect.')
+      // A dead refresh token means the backend already cleared the connection —
+      // reflect that immediately instead of waiting for the next poll.
+      qc.invalidateQueries({ queryKey: ['google-status'] })
+    },
   })
 
   const handleConnect = async () => {
@@ -142,19 +161,48 @@ function GoogleIntegrationCard() {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className={`h-2 w-2 rounded-full ${status?.connected ? 'bg-success' : 'bg-border dark:bg-border-dark'}`} />
-            <span className="text-[13px] text-text-primary dark:text-text-primary-dark">
-              {isLoading ? 'Checking…' : status?.connected ? 'Connected to Google' : 'Not connected'}
-            </span>
+            <div>
+              <span className="text-[13px] text-text-primary dark:text-text-primary-dark">
+                {isLoading ? 'Checking…' : status?.connected ? 'Connected to Google' : 'Not connected'}
+              </span>
+              {status?.connected && status.expires_at && (
+                <p className="text-[11px] text-text-secondary dark:text-text-secondary-dark">
+                  Access token valid until {new Date(status.expires_at).toLocaleString()}
+                </p>
+              )}
+            </div>
           </div>
           {status?.connected ? (
-            <Button variant="ghost" size="sm" loading={disconnect.isPending}
-              onClick={() => disconnect.mutate()} className="text-danger hover:bg-danger/10">
-              Disconnect
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="ghost" size="sm" loading={refresh.isPending}
+                onClick={() => refresh.mutate()} className="flex items-center gap-1.5">
+                <RefreshCw className="h-3.5 w-3.5" /> Refresh
+              </Button>
+              <Button variant="ghost" size="sm" loading={disconnect.isPending}
+                onClick={() => disconnect.mutate()} className="text-danger hover:bg-danger/10">
+                Disconnect
+              </Button>
+            </div>
           ) : (
             <Button variant="primary" size="sm" onClick={handleConnect}>Connect Google</Button>
           )}
         </div>
+
+        {refreshOk && (
+          <p className="text-[11px] text-success flex items-center gap-1">
+            <CheckCircle className="h-3.5 w-3.5" /> Connection refreshed.
+          </p>
+        )}
+        {refreshError && (
+          <div className="flex items-center justify-between gap-2 text-[11px] text-danger bg-danger/8 rounded-md px-3 py-2">
+            <span className="flex items-center gap-1.5">
+              <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" /> {refreshError}
+            </span>
+            {!status?.connected && (
+              <Button variant="primary" size="sm" onClick={handleConnect}>Reconnect</Button>
+            )}
+          </div>
+        )}
 
         {!status?.connected && !isLoading && (
           <div className="text-[11px] text-text-secondary dark:text-text-secondary-dark bg-surface dark:bg-surface-dark rounded-md p-3 space-y-1.5">
@@ -289,7 +337,7 @@ export default function Settings() {
                     </Button>
                     <Button variant="secondary" size="sm"
                       onClick={() => setAgentModal({ siteId: site.id, siteName: site.name })}
-                      className="flex items-center gap-1.5" title="Run all agents">
+                      className="flex items-center gap-1.5" title="Choose agents to run">
                       <Zap className="h-3 w-3" /> Run agents
                     </Button>
                     <Button variant="ghost" size="sm"

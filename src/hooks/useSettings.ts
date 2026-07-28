@@ -14,6 +14,23 @@ export interface NotificationPrefs {
   weekly_digest: boolean
 }
 
+export interface ManualAgentOption {
+  agent_name: string
+  label: string
+  category: string
+  default_enabled: boolean
+}
+
+/** Agents selectable for a manual "Run agents" trigger, default-checked to
+ * match each agent's Agent Configuration toggle. */
+export function useManualAgentOptions() {
+  return useQuery({
+    queryKey: ['agents-manual-options'],
+    queryFn: () => get<ManualAgentOption[]>('/agents/manual-options'),
+    staleTime: 60_000,
+  })
+}
+
 export function useAgentToggles() {
   return useQuery({
     queryKey: ['settings-agents'],

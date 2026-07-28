@@ -13,7 +13,7 @@ export default function AgentConfigCard() {
       <CardHeader>
         <CardTitle>Agent Configuration</CardTitle>
         <span className="text-[11px] text-text-secondary dark:text-text-secondary-dark">
-          Applies to scheduled runs — manual “Run agents” always runs everything
+          Gates scheduled runs — also the default selection for a manual “Run agents”, which you can override per run
         </span>
       </CardHeader>
       <CardContent>

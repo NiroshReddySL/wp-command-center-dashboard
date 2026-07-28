@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { CheckCircle, XCircle, Loader2, AlertTriangle, Zap, X, OctagonX } from 'lucide-react'
+import { CheckCircle, XCircle, Loader2, AlertTriangle, Zap, X, OctagonX, Check } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import { cn } from '@/lib/utils'
 import { get, post } from '@/lib/api'
 import { getToken } from '@/lib/auth'
+import { useManualAgentOptions } from '@/hooks/useSettings'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -31,9 +32,8 @@ const CATEGORY_COLOR: Record<string, string> = {
   optimizer:  'text-primary bg-primary/8',
   watchdog:   'text-warning bg-warning/8',
   autopilot:  'text-success bg-success/8',
+  flows:      'text-secondary bg-secondary/8',
 }
-
-const TOTAL_STEPS = 7
 
 // ── Step row ──────────────────────────────────────────────────────────────────
 
@@ -107,13 +107,35 @@ export default function AgentProgressModal({
 }: AgentProgressModalProps) {
   const [steps, setSteps] = useState<AgentStep[]>([])
   const [pct, setPct] = useState(0)
-  const [phase, setPhase] = useState<'starting' | 'running' | 'stopping' | 'stopped' | 'done' | 'error'>('starting')
+  const [phase, setPhase] = useState<'selecting' | 'starting' | 'running' | 'stopping' | 'stopped' | 'done' | 'error'>('selecting')
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const [jobId, setJobId] = useState<string | null>(initialJobId ?? null)
+  const [selected, setSelected] = useState<Set<string>>(new Set())
   const esRef = useRef<EventSource | null>(null)
 
+  const { data: agentOptions, isLoading: optionsLoading } = useManualAgentOptions()
+
+  // Seed the checklist from each agent's Agent Configuration toggle, every
+  // time the modal opens fresh — reruns if agentOptions was still loading at
+  // that point. Deliberately NOT keyed on `selected` itself, so freely
+  // toggling checkboxes afterward never gets stomped back to the defaults.
+  useEffect(() => {
+    if (open && !initialJobId && agentOptions) {
+      setSelected(new Set(agentOptions.filter((o) => o.default_enabled).map((o) => o.agent_name)))
+    }
+  }, [open, initialJobId, agentOptions])
+
+  function toggleAgent(name: string) {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(name)) next.delete(name)
+      else next.add(name)
+      return next
+    })
+  }
+
   // Ref mirrors phase so closures always see current value
-  const phaseRef = useRef<string>('starting')
+  const phaseRef = useRef<string>('selecting')
   const setPhaseSync = (p: typeof phase) => {
     phaseRef.current = p
     setPhase(p)
@@ -232,6 +254,24 @@ export default function AgentProgressModal({
   // eslint-disable-next-line react-hooks/exhaustive-deps -- setPhaseSync is a stable ref-writer
   }, [jobId])
 
+  const handleStartRun = useCallback(() => {
+    if (!siteId || selected.size === 0) return
+    setPhaseSync('starting')
+    setErrorMsg(null)
+
+    post<{ job_id: string }>(`/agents/${siteId}/run-job`, { agent_names: Array.from(selected) })
+      .then((res) => {
+        setJobId(res.job_id)
+        onJobStart?.(res.job_id)
+        openStream(res.job_id)
+      })
+      .catch((err) => {
+        setErrorMsg(err?.message ?? 'Failed to start agents')
+        setPhaseSync('error')
+      })
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- openStream/onJobStart are stable across the modal's lifetime
+  }, [siteId, selected])
+
   useEffect(() => {
     if (!open || !siteId) return
 
@@ -243,30 +283,16 @@ export default function AgentProgressModal({
       return
     }
 
-    // Reset and start a new job
+    // Fresh open — show the agent picker; the job only starts once the user
+    // confirms a selection via handleStartRun. (Checklist seeding is handled
+    // by the effect above, keyed on `open` so it reseeds every fresh open.)
     setSteps([])
     setPct(0)
-    setPhaseSync('starting')
+    setPhaseSync('selecting')
     setErrorMsg(null)
     setJobId(null)
 
-    let cancelled = false
-
-    post<{ job_id: string }>(`/agents/${siteId}/run-job`, {})
-      .then((res) => {
-        if (cancelled) return
-        setJobId(res.job_id)
-        onJobStart?.(res.job_id)
-        openStream(res.job_id)
-      })
-      .catch((err) => {
-        if (cancelled) return
-        setErrorMsg(err?.message ?? 'Failed to start agents')
-        setPhaseSync('error')
-      })
-
     return () => {
-      cancelled = true
       esRef.current?.close()
       esRef.current = null
     }
@@ -277,7 +303,7 @@ export default function AgentProgressModal({
 
   if (!open) return null
 
-  const isTerminal = phase !== 'running' && phase !== 'stopping' && phase !== 'starting'
+  const isTerminal = phase !== 'selecting' && phase !== 'running' && phase !== 'stopping' && phase !== 'starting'
 
   return createPortal(
     <AnimatePresence>
@@ -287,7 +313,7 @@ export default function AgentProgressModal({
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
         className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm"
-        onClick={isTerminal ? onClose : undefined}
+        onClick={(isTerminal || phase === 'selecting') ? onClose : undefined}
       >
         <motion.div
           key="panel"
@@ -305,7 +331,7 @@ export default function AgentProgressModal({
             </div>
             <div className="flex-1 min-w-0">
               <h2 className="text-[14px] font-semibold text-text-primary dark:text-text-primary-dark">
-                Running agents
+                {phase === 'selecting' ? 'Select agents to run' : 'Running agents'}
               </h2>
               <p className="text-[11px] text-text-secondary dark:text-text-secondary-dark truncate">
                 {siteName}
@@ -337,107 +363,174 @@ export default function AgentProgressModal({
             </div>
           </div>
 
-          {/* Progress bar */}
-          <div className="px-5 pb-3">
-            <div className="flex items-center justify-between mb-1.5">
-              <span className="text-[11px] text-text-secondary dark:text-text-secondary-dark">
-                {phase === 'starting'
-                  ? 'Starting agents…'
-                  : phase === 'done'
-                  ? `Completed — ${completedCount} of ${steps.length} agents ran`
-                  : phase === 'stopped'
-                  ? `Stopped — ${completedCount} of ${steps.length} agents completed`
-                  : phase === 'error'
-                  ? 'Stopped due to error'
-                  : phase === 'stopping'
-                  ? 'Finishing current agent…'
-                  : `${completedCount} / ${steps.length || TOTAL_STEPS} agents`}
-              </span>
-              <span className={cn(
-                'text-[11px] font-semibold tabular-nums',
-                phase === 'done' ? 'text-success' : (phase === 'error' || phase === 'stopped') ? 'text-danger' : 'text-primary'
-              )}>
-                {pct}%
-              </span>
-            </div>
-            <div className="h-1.5 bg-surface dark:bg-surface-dark rounded-full overflow-hidden">
-              <motion.div
-                className={cn(
-                  'h-full rounded-full',
-                  phase === 'done' ? 'bg-success'
-                  : (phase === 'error' || phase === 'stopped') ? 'bg-danger'
-                  : phase === 'stopping' ? 'bg-warning'
-                  : 'bg-primary'
-                )}
-                animate={{ width: phase === 'starting' ? '4%' : `${pct}%` }}
-                transition={{ duration: 0.4, ease: 'easeOut' }}
-              />
-            </div>
-          </div>
-
-          {/* Steps */}
-          <div className="px-5 pb-4 divide-y divide-border dark:divide-border-dark max-h-72 overflow-y-auto">
-            {phase === 'starting' ? (
-              Array.from({ length: TOTAL_STEPS }).map((_, i) => (
-                <div key={i} className="flex items-center gap-3 py-2">
-                  <div className="w-5 flex-shrink-0 flex justify-center">
-                    <div className="w-3 h-3 rounded-full border-2 border-border dark:border-border-dark" />
-                  </div>
-                  <div className="h-3 w-32 bg-surface dark:bg-surface-dark rounded animate-pulse" />
+          {phase === 'selecting' ? (
+            <>
+              {/* Agent picker */}
+              <div className="px-5 pb-2">
+                <p className="text-[12px] text-text-secondary dark:text-text-secondary-dark mb-3">
+                  Pre-checked to match Agent Configuration — tick or untick just for this run.
+                </p>
+                <div className="flex flex-col gap-1 max-h-72 overflow-y-auto">
+                  {optionsLoading ? (
+                    Array.from({ length: 6 }).map((_, i) => (
+                      <div key={i} className="h-9 bg-surface dark:bg-surface-dark rounded-lg animate-pulse" />
+                    ))
+                  ) : (
+                    (agentOptions ?? []).map((opt) => (
+                      <label
+                        key={opt.agent_name}
+                        className="flex items-center gap-2.5 px-2 py-2 rounded-lg hover:bg-surface dark:hover:bg-surface-dark cursor-pointer transition-colors"
+                      >
+                        <span
+                          role="checkbox"
+                          aria-checked={selected.has(opt.agent_name)}
+                          onClick={() => toggleAgent(opt.agent_name)}
+                          className={cn(
+                            'h-4 w-4 rounded border flex items-center justify-center flex-shrink-0 transition-colors',
+                            selected.has(opt.agent_name)
+                              ? 'bg-primary border-primary'
+                              : 'border-border dark:border-border-dark'
+                          )}
+                        >
+                          {selected.has(opt.agent_name) && <Check className="h-3 w-3 text-white" />}
+                        </span>
+                        <span className={cn(
+                          'text-[10px] font-medium px-1.5 py-0.5 rounded capitalize',
+                          CATEGORY_COLOR[opt.category] ?? 'text-text-secondary bg-surface'
+                        )}>
+                          {opt.category}
+                        </span>
+                        <span className="text-[13px] text-text-primary dark:text-text-primary-dark">
+                          {opt.label}
+                        </span>
+                      </label>
+                    ))
+                  )}
                 </div>
-              ))
-            ) : (
-              steps.map((step, i) => (
-                step.label
-                  ? <StepRow key={i} step={step} />
-                  : (
+              </div>
+
+              {/* Footer */}
+              <div className="px-5 pb-5 pt-3 border-t border-border dark:border-border-dark flex items-center gap-2">
+                <button
+                  onClick={handleStartRun}
+                  disabled={selected.size === 0}
+                  className="flex-1 py-2 rounded-lg text-[13px] font-medium bg-primary text-white hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  Run {selected.size} agent{selected.size === 1 ? '' : 's'}
+                </button>
+                <button
+                  onClick={onClose}
+                  className="px-4 py-2 rounded-lg text-[13px] font-medium bg-surface dark:bg-surface-dark text-text-primary dark:text-text-primary-dark hover:bg-border dark:hover:bg-border-dark transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              {/* Progress bar */}
+              <div className="px-5 pb-3">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[11px] text-text-secondary dark:text-text-secondary-dark">
+                    {phase === 'starting'
+                      ? 'Starting agents…'
+                      : phase === 'done'
+                      ? `Completed — ${completedCount} of ${steps.length} agents ran`
+                      : phase === 'stopped'
+                      ? `Stopped — ${completedCount} of ${steps.length} agents completed`
+                      : phase === 'error'
+                      ? 'Stopped due to error'
+                      : phase === 'stopping'
+                      ? 'Finishing current agent…'
+                      : `${completedCount} / ${steps.length || selected.size} agents`}
+                  </span>
+                  <span className={cn(
+                    'text-[11px] font-semibold tabular-nums',
+                    phase === 'done' ? 'text-success' : (phase === 'error' || phase === 'stopped') ? 'text-danger' : 'text-primary'
+                  )}>
+                    {pct}%
+                  </span>
+                </div>
+                <div className="h-1.5 bg-surface dark:bg-surface-dark rounded-full overflow-hidden">
+                  <motion.div
+                    className={cn(
+                      'h-full rounded-full',
+                      phase === 'done' ? 'bg-success'
+                      : (phase === 'error' || phase === 'stopped') ? 'bg-danger'
+                      : phase === 'stopping' ? 'bg-warning'
+                      : 'bg-primary'
+                    )}
+                    animate={{ width: phase === 'starting' ? '4%' : `${pct}%` }}
+                    transition={{ duration: 0.4, ease: 'easeOut' }}
+                  />
+                </div>
+              </div>
+
+              {/* Steps */}
+              <div className="px-5 pb-4 divide-y divide-border dark:divide-border-dark max-h-72 overflow-y-auto">
+                {phase === 'starting' ? (
+                  Array.from({ length: selected.size }).map((_, i) => (
                     <div key={i} className="flex items-center gap-3 py-2">
                       <div className="w-5 flex-shrink-0 flex justify-center">
                         <div className="w-3 h-3 rounded-full border-2 border-border dark:border-border-dark" />
                       </div>
                       <div className="h-3 w-32 bg-surface dark:bg-surface-dark rounded animate-pulse" />
                     </div>
-                  )
-              ))
-            )}
-          </div>
-
-          {/* Running notice — modal can be closed, job continues */}
-          {(phase === 'running' || phase === 'stopping') && (
-            <div className="mx-5 mb-4 flex items-start gap-2 bg-primary/5 border border-primary/15 rounded-lg px-3 py-2">
-              <p className="text-[11px] text-text-secondary dark:text-text-secondary-dark">
-                Job runs in the background — safe to close this window.
-              </p>
-            </div>
-          )}
-
-          {/* Error / stopped message */}
-          {(phase === 'error' || phase === 'stopped') && (
-            <div className="mx-5 mb-4 flex items-start gap-2 bg-danger/8 border border-danger/20 rounded-lg px-3 py-2.5">
-              <AlertTriangle className="h-4 w-4 text-danger flex-shrink-0 mt-0.5" />
-              <p className="text-[12px] text-danger">
-                {phase === 'stopped'
-                  ? `Run stopped. ${completedCount} of ${steps.length} agents completed — results so far have been saved.`
-                  : (errorMsg ?? 'An error occurred')}
-              </p>
-            </div>
-          )}
-
-          {/* Footer */}
-          {isTerminal && (
-            <div className="px-5 pb-5 pt-1 border-t border-border dark:border-border-dark">
-              <button
-                onClick={onClose}
-                className={cn(
-                  'w-full py-2 rounded-lg text-[13px] font-medium transition-colors',
-                  phase === 'done'
-                    ? 'bg-success text-white hover:bg-success/90'
-                    : 'bg-surface dark:bg-surface-dark text-text-primary dark:text-text-primary-dark hover:bg-border dark:hover:bg-border-dark'
+                  ))
+                ) : (
+                  steps.map((step, i) => (
+                    step.label
+                      ? <StepRow key={i} step={step} />
+                      : (
+                        <div key={i} className="flex items-center gap-3 py-2">
+                          <div className="w-5 flex-shrink-0 flex justify-center">
+                            <div className="w-3 h-3 rounded-full border-2 border-border dark:border-border-dark" />
+                          </div>
+                          <div className="h-3 w-32 bg-surface dark:bg-surface-dark rounded animate-pulse" />
+                        </div>
+                      )
+                  ))
                 )}
-              >
-                {phase === 'done' ? 'Done' : 'Close'}
-              </button>
-            </div>
+              </div>
+
+              {/* Running notice — modal can be closed, job continues */}
+              {(phase === 'running' || phase === 'stopping') && (
+                <div className="mx-5 mb-4 flex items-start gap-2 bg-primary/5 border border-primary/15 rounded-lg px-3 py-2">
+                  <p className="text-[11px] text-text-secondary dark:text-text-secondary-dark">
+                    Job runs in the background — safe to close this window.
+                  </p>
+                </div>
+              )}
+
+              {/* Error / stopped message */}
+              {(phase === 'error' || phase === 'stopped') && (
+                <div className="mx-5 mb-4 flex items-start gap-2 bg-danger/8 border border-danger/20 rounded-lg px-3 py-2.5">
+                  <AlertTriangle className="h-4 w-4 text-danger flex-shrink-0 mt-0.5" />
+                  <p className="text-[12px] text-danger">
+                    {phase === 'stopped'
+                      ? `Run stopped. ${completedCount} of ${steps.length} agents completed — results so far have been saved.`
+                      : (errorMsg ?? 'An error occurred')}
+                  </p>
+                </div>
+              )}
+
+              {/* Footer */}
+              {isTerminal && (
+                <div className="px-5 pb-5 pt-1 border-t border-border dark:border-border-dark">
+                  <button
+                    onClick={onClose}
+                    className={cn(
+                      'w-full py-2 rounded-lg text-[13px] font-medium transition-colors',
+                      phase === 'done'
+                        ? 'bg-success text-white hover:bg-success/90'
+                        : 'bg-surface dark:bg-surface-dark text-text-primary dark:text-text-primary-dark hover:bg-border dark:hover:bg-border-dark'
+                    )}
+                  >
+                    {phase === 'done' ? 'Done' : 'Close'}
+                  </button>
+                </div>
+              )}
+            </>
           )}
         </motion.div>
       </motion.div>

@@ -55,6 +55,7 @@ export interface ActivityItem {
 export interface GoogleStatus {
   connected: boolean
   scopes: string[]
+  expires_at: string | null
 }
 
 export interface AgentSummary {
