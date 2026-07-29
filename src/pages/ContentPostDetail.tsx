@@ -1,20 +1,172 @@
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
-import { ArrowLeft, ExternalLink, RefreshCw, AlertTriangle, CheckCircle, Info, XCircle, Sparkles, Clock, FileText, Image, Link2, Calendar, Heading, AlignLeft, History, Code2 } from 'lucide-react'
+import { ArrowLeft, ExternalLink, RefreshCw, AlertTriangle, CheckCircle, Info, XCircle, Sparkles, Clock, FileText, Image, Link2, Calendar, Heading, AlignLeft, History, Code2, TrendingUp, MousePointerClick, Timer, Route } from 'lucide-react'
 import { motion } from 'framer-motion'
 import PageShell from '@/components/layout/PageShell'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/Card'
 import Badge from '@/components/ui/Badge'
 import Button from '@/components/ui/Button'
 import Skeleton from '@/components/ui/Skeleton'
-import { cn, formatNumber, timeAgo } from '@/lib/utils'
+import EmptyState from '@/components/ui/EmptyState'
+import TrendIndicator from '@/components/ui/TrendIndicator'
+import AreaChart from '@/components/charts/AreaChart'
+import { cn, formatNumber, timeAgo, formatPercent } from '@/lib/utils'
 import {
-  useContentPostDetail, useRegenerateAI, useRescanPost, isPostGoneError, rescanErrorDetail,
-  type ScoreCategory,
+  useContentPostDetail, useContentPostAnalytics, useRegenerateAI, useRescanPost,
+  isPostGoneError, rescanErrorDetail,
+  type ScoreCategory, type ConversionFlow,
 } from '@/hooks/useOptimizer'
 import { useSiteContext } from '@/contexts/SiteContext'
 import { useQuery } from '@tanstack/react-query'
 import { get } from '@/lib/api'
 import Tooltip from '@/components/ui/Tooltip'
+
+// ── Analytics overview ────────────────────────────────────────────────────────
+
+function formatDuration(seconds: number): string {
+  const m = Math.floor(seconds / 60)
+  const s = Math.round(seconds % 60)
+  return m > 0 ? `${m}m ${s}s` : `${s}s`
+}
+
+function ConversionFlowBar({ flow }: { flow: ConversionFlow }) {
+  const pct = flow.entered > 0 ? Math.max((flow.reached / flow.entered) * 100, flow.reached > 0 ? 2 : 0) : 0
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center justify-between text-[12px]">
+        <span className="text-text-primary dark:text-text-primary-dark font-medium">
+          This post → {flow.label}
+        </span>
+        <span className="text-text-secondary dark:text-text-secondary-dark">
+          {formatNumber(flow.reached)} of {formatNumber(flow.entered)} · {formatPercent(flow.conversion_rate * 100, 1)}
+        </span>
+      </div>
+      <div className="h-2.5 rounded-full bg-surface dark:bg-surface-dark overflow-hidden">
+        <div
+          className="h-full rounded-full bg-primary dark:bg-primary-dark transition-all duration-500"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <a
+        href={flow.target_url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="text-[11px] text-text-secondary dark:text-text-secondary-dark hover:text-primary dark:hover:text-primary-dark truncate w-fit"
+      >
+        {flow.target_title}
+      </a>
+    </div>
+  )
+}
+
+function AnalyticsOverviewCard({ postRef, siteId }: { postRef: string; siteId: string | null }) {
+  const { data, isLoading, isError } = useContentPostAnalytics(postRef, siteId)
+
+  return (
+    <Card className="p-5 mb-5">
+      <CardHeader className="mb-3">
+        <div className="flex items-center gap-2">
+          <TrendingUp className="h-4 w-4 text-primary" />
+          <CardTitle>Analytics Overview</CardTitle>
+        </div>
+        <span className="text-[11px] text-text-secondary dark:text-text-secondary-dark">Google Analytics · last 30 days</span>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="space-y-3">
+            <div className="grid grid-cols-3 gap-4">
+              {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-20 rounded-lg" />)}
+            </div>
+            <Skeleton className="h-40 w-full rounded-lg" />
+          </div>
+        ) : isError || !data ? (
+          <p className="text-[13px] text-text-secondary dark:text-text-secondary-dark py-4">
+            Couldn't load analytics right now.
+          </p>
+        ) : !data.connected ? (
+          <EmptyState
+            title="Connect Google Analytics"
+            description="Connect your site's GA4 property in Settings to see traffic trends, bounce rate, and conversion flow for this post."
+          />
+        ) : data.error ? (
+          <p className="text-[13px] text-danger py-4">{data.error}</p>
+        ) : (
+          <div className="space-y-5">
+            {/* Stat tiles */}
+            <div className="grid grid-cols-3 gap-4">
+              <div className="rounded-lg border border-border dark:border-border-dark p-4">
+                <div className="flex items-center gap-1.5 text-[11px] text-text-secondary dark:text-text-secondary-dark uppercase tracking-wide mb-1.5">
+                  <MousePointerClick className="h-3.5 w-3.5" /> Traffic (30d)
+                </div>
+                <div className="flex items-baseline gap-2">
+                  <span className="text-[20px] font-bold text-text-primary dark:text-text-primary-dark">
+                    {formatNumber(data.traffic_30d)}
+                  </span>
+                  {data.traffic_change_pct != null && (
+                    <TrendIndicator value={data.traffic_change_pct} />
+                  )}
+                </div>
+                <p className="text-[10px] text-text-secondary dark:text-text-secondary-dark mt-1">
+                  vs {formatNumber(data.traffic_prev_30d)} previous 30 days
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-border dark:border-border-dark p-4">
+                <div className="flex items-center gap-1.5 text-[11px] text-text-secondary dark:text-text-secondary-dark uppercase tracking-wide mb-1.5">
+                  <Route className="h-3.5 w-3.5" /> Bounce Rate
+                </div>
+                <span className={cn(
+                  'text-[20px] font-bold',
+                  data.bounce_rate == null ? 'text-text-secondary dark:text-text-secondary-dark'
+                    : data.bounce_rate > 70 ? 'text-danger' : data.bounce_rate > 50 ? 'text-warning' : 'text-success'
+                )}>
+                  {data.bounce_rate != null ? formatPercent(data.bounce_rate, 1) : '—'}
+                </span>
+              </div>
+
+              <div className="rounded-lg border border-border dark:border-border-dark p-4">
+                <div className="flex items-center gap-1.5 text-[11px] text-text-secondary dark:text-text-secondary-dark uppercase tracking-wide mb-1.5">
+                  <Timer className="h-3.5 w-3.5" /> Avg. Engagement
+                </div>
+                <span className="text-[20px] font-bold text-text-primary dark:text-text-primary-dark">
+                  {data.avg_engagement_time != null ? formatDuration(data.avg_engagement_time) : '—'}
+                </span>
+              </div>
+            </div>
+
+            {/* Daily traffic chart */}
+            {data.daily_traffic.length > 0 && (
+              <AreaChart
+                data={data.daily_traffic as unknown as Record<string, unknown>[]}
+                series={[{ key: 'views', label: 'Visitors' }]}
+                height={160}
+                formatter={(v) => formatNumber(v)}
+              />
+            )}
+
+            {/* Flow to Contact/Pricing */}
+            <div className="pt-4 border-t border-border dark:border-border-dark">
+              <p className="text-[11px] font-semibold text-text-secondary dark:text-text-secondary-dark uppercase tracking-wide mb-3">
+                Flow to Contact / Pricing
+              </p>
+              {data.flows.length === 0 ? (
+                <p className="text-[12px] text-text-secondary dark:text-text-secondary-dark">
+                  No Contact or Pricing page detected for this site yet.
+                </p>
+              ) : (
+                <div className="space-y-4">
+                  {data.flows.map((flow) => <ConversionFlowBar key={flow.label} flow={flow} />)}
+                  <p className="text-[10px] text-text-secondary dark:text-text-secondary-dark">
+                    Based on visitors who reached the page — not a form-submission count (not tracked yet).
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
 
 // ── Score circle ──────────────────────────────────────────────────────────────
 
@@ -511,6 +663,9 @@ export default function ContentPostDetail() {
           </Button>
         </div>
       </Card>
+
+      {/* Analytics overview */}
+      <AnalyticsOverviewCard postRef={postId} siteId={post.site_id} />
 
       {/* Scored breakdown grid */}
       <div className="grid grid-cols-3 gap-4 mb-4">

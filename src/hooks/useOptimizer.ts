@@ -187,6 +187,45 @@ export function useContentPostDetail(ref: string, siteId?: string | null) {
   })
 }
 
+export interface DailyTrafficPoint {
+  date: string
+  views: number
+}
+
+export interface ConversionFlow {
+  label: string
+  target_title: string
+  target_url: string
+  entered: number
+  reached: number
+  conversion_rate: number // 0-1
+}
+
+export interface ContentPostAnalytics {
+  connected: boolean
+  daily_traffic: DailyTrafficPoint[]
+  traffic_30d: number
+  traffic_prev_30d: number
+  traffic_change_pct: number | null
+  bounce_rate: number | null // 0-100
+  avg_engagement_time: number | null // seconds
+  flows: ConversionFlow[]
+  error?: string | null
+}
+
+export function useContentPostAnalytics(ref: string, siteId?: string | null) {
+  return useQuery({
+    queryKey: ['content-post-analytics', ref, siteId ?? null],
+    queryFn: () =>
+      get<ContentPostAnalytics>(
+        `/optimizer/content-health/${ref}/analytics`,
+        siteId ? { site_id: siteId } : undefined
+      ),
+    enabled: Boolean(ref),
+    staleTime: 5 * 60_000, // live GA4 call — no need to refetch aggressively
+  })
+}
+
 export function useRescanPost(postId: string) {
   const qc = useQueryClient()
   return useMutation({
