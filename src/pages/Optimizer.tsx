@@ -22,6 +22,7 @@ import ContentScoreBar from '@/components/domain/ContentScoreBar'
 import { useSiteContext } from '@/contexts/SiteContext'
 import {
   useContentHealth, useRescanPost, isPostGoneError, rescanErrorDetail,
+  isRateLimitedError, retryAfterSeconds,
   CONTENT_TYPE_OPTIONS, HEALTH_STATUS_OPTIONS, ANALYZED_OPTIONS, ISSUE_CATEGORY_OPTIONS,
   type ContentSortBy, type SortDir, type ContentTypeFilter, type HealthStatusFilter, type AnalyzedFilter,
   type IssueCategory,
@@ -457,18 +458,26 @@ function RescanRowButton({ postId }: { postId: string }) {
   // removed server-side — the row disappears once the list refetches
   // (see useRescanPost's onSettled), so there's nothing useful to retry.
   const postGone = rescan.isError && isPostGoneError(rescan.error)
+  // Rate limiting isn't a failure of THIS post — retrying immediately just
+  // burns another slot and pushes the wait further out, so it reads as
+  // "slow down" (warning) rather than "broken" (danger).
+  const rateLimited = rescan.isError && isRateLimitedError(rescan.error)
+  const retryAfter = rateLimited ? retryAfterSeconds(rescan.error) : null
   return (
     <button
       onClick={() => rescan.mutate()}
       disabled={rescan.isPending || postGone}
       title={
         postGone ? rescanErrorDetail(rescan.error, 'This page no longer exists on WordPress')
+        : rateLimited ? `Too many rescans at once — wait ${retryAfter ?? 'a few'}s and try again`
         : rescan.isError ? 'Rescan failed — click to retry'
         : 'Rescan this post'
       }
       className={cn(
         'p-1 rounded transition-colors disabled:opacity-50',
-        rescan.isError
+        rateLimited
+          ? 'text-warning hover:bg-warning/10 dark:hover:bg-warning/20'
+          : rescan.isError
           ? 'text-danger hover:bg-danger/10 dark:hover:bg-danger/20'
           : 'text-text-secondary dark:text-text-secondary-dark hover:bg-surface dark:hover:bg-surface-dark'
       )}

@@ -28,32 +28,64 @@ function formatDuration(seconds: number): string {
   return m > 0 ? `${m}m ${s}s` : `${s}s`
 }
 
-function ConversionFlowBar({ flow }: { flow: ConversionFlow }) {
-  const pct = flow.entered > 0 ? Math.max((flow.reached / flow.entered) * 100, flow.reached > 0 ? 2 : 0) : 0
+interface FunnelStage {
+  label: string
+  count: number
+  pctOfEntered: number
+  isConfirmed: boolean // real submission data, not just a page view
+}
+
+function ConversionFunnel({ flow }: { flow: ConversionFlow }) {
+  const stages: FunnelStage[] = [
+    { label: 'Visited this post', count: flow.entered, pctOfEntered: 100, isConfirmed: false },
+    { label: `Reached ${flow.label}`, count: flow.reached, pctOfEntered: flow.reach_rate * 100, isConfirmed: false },
+    ...(flow.submitted != null
+      ? [{ label: 'Submitted the form', count: flow.submitted, pctOfEntered: (flow.submission_rate ?? 0) * 100, isConfirmed: true }]
+      : []),
+  ]
+  const maxCount = flow.entered || 1
+
   return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex items-center justify-between text-[12px]">
-        <span className="text-text-primary dark:text-text-primary-dark font-medium">
-          This post → {flow.label}
-        </span>
-        <span className="text-text-secondary dark:text-text-secondary-dark">
-          {formatNumber(flow.reached)} of {formatNumber(flow.entered)} · {formatPercent(flow.conversion_rate * 100, 1)}
-        </span>
+    <div className="flex flex-col gap-2.5">
+      <div className="flex items-center justify-between">
+        <span className="text-[12px] font-semibold text-text-primary dark:text-text-primary-dark">{flow.label}</span>
+        <a
+          href={flow.target_url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-[11px] text-text-secondary dark:text-text-secondary-dark hover:text-primary dark:hover:text-primary-dark truncate max-w-[240px]"
+        >
+          {flow.target_title}
+        </a>
       </div>
-      <div className="h-2.5 rounded-full bg-surface dark:bg-surface-dark overflow-hidden">
-        <div
-          className="h-full rounded-full bg-primary dark:bg-primary-dark transition-all duration-500"
-          style={{ width: `${pct}%` }}
-        />
+      <div className="flex flex-col gap-1.5">
+        {stages.map((stage) => {
+          const widthPct = maxCount > 0 ? Math.max((stage.count / maxCount) * 100, stage.count > 0 ? 3 : 0) : 0
+          return (
+            <div key={stage.label} className="flex items-center gap-3">
+              <span className="w-36 flex-shrink-0 text-[11px] text-text-secondary dark:text-text-secondary-dark truncate">
+                {stage.label}
+              </span>
+              <div className="flex-1 h-4 rounded-full bg-surface dark:bg-surface-dark overflow-hidden">
+                <div
+                  className={cn(
+                    'h-full rounded-full transition-all duration-500',
+                    stage.isConfirmed ? 'bg-success' : 'bg-primary dark:bg-primary-dark'
+                  )}
+                  style={{ width: `${widthPct}%` }}
+                />
+              </div>
+              <span className={cn(
+                'w-28 flex-shrink-0 text-[11px] font-medium text-right',
+                stage.isConfirmed ? 'text-success' : 'text-text-primary dark:text-text-primary-dark'
+              )}>
+                {formatNumber(stage.count)}
+                <span className="text-text-secondary dark:text-text-secondary-dark font-normal"> ({formatPercent(stage.pctOfEntered, 1)})</span>
+              </span>
+            </div>
+          )
+        })}
       </div>
-      <a
-        href={flow.target_url}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-[11px] text-text-secondary dark:text-text-secondary-dark hover:text-primary dark:hover:text-primary-dark truncate w-fit"
-      >
-        {flow.target_title}
-      </a>
     </div>
   )
 }
@@ -145,18 +177,28 @@ function AnalyticsOverviewCard({ postRef, siteId }: { postRef: string; siteId: s
 
             {/* Flow to Contact/Pricing */}
             <div className="pt-4 border-t border-border dark:border-border-dark">
-              <p className="text-[11px] font-semibold text-text-secondary dark:text-text-secondary-dark uppercase tracking-wide mb-3">
-                Flow to Contact / Pricing
-              </p>
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-[11px] font-semibold text-text-secondary dark:text-text-secondary-dark uppercase tracking-wide">
+                  Flow to Contact / Pricing
+                </p>
+                {data.total_leads != null && (
+                  <span className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-success bg-success/10 px-2.5 py-1 rounded-full">
+                    <CheckCircle className="h-3.5 w-3.5" />
+                    {formatNumber(data.total_leads)} lead{data.total_leads === 1 ? '' : 's'} generated
+                  </span>
+                )}
+              </div>
               {data.flows.length === 0 ? (
                 <p className="text-[12px] text-text-secondary dark:text-text-secondary-dark">
                   No Contact or Pricing page detected for this site yet.
                 </p>
               ) : (
-                <div className="space-y-4">
-                  {data.flows.map((flow) => <ConversionFlowBar key={flow.label} flow={flow} />)}
+                <div className="space-y-5">
+                  {data.flows.map((flow) => <ConversionFunnel key={flow.label} flow={flow} />)}
                   <p className="text-[10px] text-text-secondary dark:text-text-secondary-dark">
-                    Based on visitors who reached the page — not a form-submission count (not tracked yet).
+                    {data.total_leads != null
+                      ? 'Submitted the form = reached your confirmation page after this flow — a real, attributable conversion.'
+                      : 'Based on visitors who reached the page — no confirmation ("thank you") page detected yet to confirm actual submissions.'}
                   </p>
                 </div>
               )}

@@ -198,7 +198,9 @@ export interface ConversionFlow {
   target_url: string
   entered: number
   reached: number
-  conversion_rate: number // 0-1
+  reach_rate: number // 0-1, reached/entered
+  submitted: number | null // null when no confirmation page was detected for this site
+  submission_rate: number | null // 0-1, submitted/entered
 }
 
 export interface ContentPostAnalytics {
@@ -210,6 +212,7 @@ export interface ContentPostAnalytics {
   bounce_rate: number | null // 0-100
   avg_engagement_time: number | null // seconds
   flows: ConversionFlow[]
+  total_leads: number | null
   error?: string | null
 }
 
@@ -247,6 +250,22 @@ export function useRescanPost(postId: string) {
  * pointless, unlike a transient failure (WP unreachable, rate limited). */
 export function isPostGoneError(err: unknown): boolean {
   return (err as { response?: { status?: number } })?.response?.status === 404
+}
+
+/** True when the request was rate limited rather than genuinely failing —
+ * clicking again immediately just burns another slot and makes the wait
+ * longer, so the UI must say "wait", not "retry". */
+export function isRateLimitedError(err: unknown): boolean {
+  return (err as { response?: { status?: number } })?.response?.status === 429
+}
+
+/** Seconds the server asked us to wait, from the Retry-After header it sends
+ * with every 429. Null when absent/unparseable. */
+export function retryAfterSeconds(err: unknown): number | null {
+  const raw = (err as { response?: { headers?: Record<string, string> } })
+    ?.response?.headers?.['retry-after']
+  const parsed = Number(raw)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
 }
 
 export function rescanErrorDetail(err: unknown, fallback: string): string {

@@ -1,5 +1,21 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { get, post } from '@/lib/api'
+import type { DailyRangeKey } from '@/components/domain/DateRangePicker'
+
+export interface TrafficRangeSelection {
+  range: DailyRangeKey
+  startDate?: string
+  endDate?: string
+}
+
+function rangeParams(selection: TrafficRangeSelection) {
+  const { range, startDate, endDate } = selection
+  return { range, ...(range === 'custom' ? { start_date: startDate, end_date: endDate } : {}) }
+}
+
+function isSelectionReady(selection: TrafficRangeSelection): boolean {
+  return selection.range !== 'custom' || Boolean(selection.startDate && selection.endDate)
+}
 
 export type TrafficMetric = 'pageviews' | 'sessions' | 'users' | 'bounce_rate' | 'avg_session_duration'
 
@@ -68,18 +84,26 @@ export function useTrafficSummary(siteId?: string, fastPoll = false) {
   })
 }
 
-export function useTrafficTrend(siteId?: string, days = 30, metric: TrafficMetric = 'pageviews') {
+export function useTrafficTrend(
+  siteId: string | undefined, selection: TrafficRangeSelection, metric: TrafficMetric = 'pageviews',
+) {
   return useQuery({
-    queryKey: ['traffic-trend', siteId, days, metric],
-    queryFn: () => get<TrendPoint[]>('/traffic/trend', { days, metric, ...(siteId ? { site_id: siteId } : {}) }),
+    queryKey: ['traffic-trend', siteId, selection.range, selection.startDate, selection.endDate, metric],
+    queryFn: () => get<TrendPoint[]>('/traffic/trend', {
+      metric, ...rangeParams(selection), ...(siteId ? { site_id: siteId } : {}),
+    }),
+    enabled: isSelectionReady(selection),
     staleTime: 60_000,
   })
 }
 
-export function useTrafficSnapshots(siteId?: string, days = 30) {
+export function useTrafficSnapshots(siteId: string | undefined, selection: TrafficRangeSelection) {
   return useQuery({
-    queryKey: ['traffic-snapshots', siteId, days],
-    queryFn: () => get<TrafficSnapshot[]>('/traffic/snapshots', { days, ...(siteId ? { site_id: siteId } : {}) }),
+    queryKey: ['traffic-snapshots', siteId, selection.range, selection.startDate, selection.endDate],
+    queryFn: () => get<TrafficSnapshot[]>('/traffic/snapshots', {
+      ...rangeParams(selection), ...(siteId ? { site_id: siteId } : {}),
+    }),
+    enabled: isSelectionReady(selection),
     staleTime: 60_000,
   })
 }
@@ -102,12 +126,13 @@ export interface TopPage {
   site_name: string
 }
 
-export function useTopPages(siteId?: string, days = 30, limit = 10) {
+export function useTopPages(siteId: string | undefined, selection: TrafficRangeSelection, limit = 10) {
   return useQuery({
-    queryKey: ['top-pages', siteId, days, limit],
-    queryFn: () => get<TopPage[]>(
-      '/traffic/top-pages', { days, limit, ...(siteId ? { site_id: siteId } : {}) }
-    ),
+    queryKey: ['top-pages', siteId, selection.range, selection.startDate, selection.endDate, limit],
+    queryFn: () => get<TopPage[]>('/traffic/top-pages', {
+      limit, ...rangeParams(selection), ...(siteId ? { site_id: siteId } : {}),
+    }),
+    enabled: isSelectionReady(selection),
     staleTime: 60_000,
   })
 }
@@ -118,10 +143,13 @@ export interface GeoBreakdown {
   cities: { city: string; country: string; views: number }[]
 }
 
-export function useGeoBreakdown(siteId?: string, days = 30) {
+export function useGeoBreakdown(siteId: string | undefined, selection: TrafficRangeSelection) {
   return useQuery({
-    queryKey: ['traffic-geo', siteId, days],
-    queryFn: () => get<GeoBreakdown>('/traffic/geo', { days, ...(siteId ? { site_id: siteId } : {}) }),
+    queryKey: ['traffic-geo', siteId, selection.range, selection.startDate, selection.endDate],
+    queryFn: () => get<GeoBreakdown>('/traffic/geo', {
+      ...rangeParams(selection), ...(siteId ? { site_id: siteId } : {}),
+    }),
+    enabled: isSelectionReady(selection),
     staleTime: 60_000,
   })
 }
@@ -150,6 +178,11 @@ export interface TrafficPrediction {
   narrative: string
   model_version: string
   insufficient_data: boolean
+  /** There WAS enough history, but the AI call itself failed (bad/missing
+   * API key, rate limit, malformed response) and no earlier prediction
+   * exists to fall back to — a real, transient error, distinct from
+   * insufficient_data (which just needs more days of history). */
+  generation_failed: boolean
 }
 
 export function useTrafficPredictions(siteId?: string, horizonDays: 7 | 14 | 30 = 7) {

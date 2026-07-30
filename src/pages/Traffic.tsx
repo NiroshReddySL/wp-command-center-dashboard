@@ -18,6 +18,10 @@ import StatusDot from '@/components/ui/StatusDot'
 import Pagination from '@/components/ui/Pagination'
 import AreaChart from '@/components/charts/AreaChart'
 import ForecastChart, { type ForecastDataPoint } from '@/components/charts/ForecastChart'
+import {
+  DAILY_RANGE_OPTIONS, daysAgoIso, rangeSummaryLabel, RangeControl,
+  type DailyRangeKey,
+} from '@/components/domain/DateRangePicker'
 import { useSiteContext } from '@/contexts/SiteContext'
 import {
   useTrafficSummary,
@@ -32,14 +36,33 @@ import {
   TRAFFIC_METRIC_OPTIONS,
   type TrafficMetric,
   type TrafficSnapshot,
+  type TrafficSummary,
+  type TrafficRangeSelection,
 } from '@/hooks/useTraffic'
 import { formatNumber, timeAgo } from '@/lib/utils'
 import { cn } from '@/lib/utils'
 
 const PAGE_SIZE = 15
-const RANGE_OPTIONS: { value: 7 | 14 | 30 | 90; label: string }[] = [
-  { value: 7, label: '7d' }, { value: 14, label: '14d' }, { value: 30, label: '30d' }, { value: 90, label: '90d' },
-]
+
+/** The preset's own label ("Last 28 days", "This Quarter", ...) for every
+ * fixed range; the real picked dates for "custom" — matches what the
+ * picker itself shows, so a chart caption never disagrees with the
+ * control that produced it. */
+function rangeDisplayLabel(range: DailyRangeKey, customStart: string, customEnd: string): string {
+  if (range === 'custom') return rangeSummaryLabel(customStart, customEnd)
+  return DAILY_RANGE_OPTIONS.find((o) => o.value === range)?.label ?? range
+}
+
+/** Whether the trend caption should read as GA4, Estimated, or (with sites
+ * on different sources) an honest "mixed" note — checking only summary[0]
+ * silently mislabeled every site after the first whenever sources differed. */
+function summarySourceLabel(summary: TrafficSummary[] | undefined): string {
+  if (!summary?.length) return ''
+  const sources = new Set(summary.map((s) => s.source))
+  if (sources.size > 1) return 'Mixed sources — see per-site notes below'
+  return sources.has('ga4') ? 'Google Analytics · real data' : 'Estimated from post data'
+}
+
 const ALERT_SEVERITY_OPTIONS = [
   { value: 'critical', label: 'Critical' },
   { value: 'warning', label: 'Warning' },
@@ -275,7 +298,9 @@ function ChangeBadge({ pct, hasComparison = true }: { pct: number; hasComparison
 
 export default function Traffic() {
   const { selectedSiteId } = useSiteContext()
-  const [days, setDays] = useState<7 | 14 | 30 | 90>(30)
+  const [range, setRange] = useState<DailyRangeKey>('28d')
+  const [customStart, setCustomStart] = useState(() => daysAgoIso(27))
+  const [customEnd, setCustomEnd] = useState(() => daysAgoIso(0))
   const [metric, setMetric] = useState<TrafficMetric>('pageviews')
   const [alertPage, setAlertPage] = useState(1)
   const [snapshotPage, setSnapshotPage] = useState(1)
@@ -289,16 +314,18 @@ export default function Traffic() {
   const [collecting, setCollecting] = useState(false)
   const autoTriggered = useRef(false)
 
+  const selection: TrafficRangeSelection = { range, startDate: customStart, endDate: customEnd }
+
   const { data: summary, isLoading: summaryLoading, isError: summaryError, refetch: refetchSummary } = useTrafficSummary(selectedSiteId || undefined, collecting)
-  const { data: trend, isLoading: trendLoading } = useTrafficTrend(selectedSiteId || undefined, days, metric)
+  const { data: trend, isLoading: trendLoading } = useTrafficTrend(selectedSiteId || undefined, selection, metric)
   const { data: alerts, isLoading: alertsLoading, isError: alertsError, refetch: refetchAlerts } = useTrafficAlerts(selectedSiteId || undefined)
-  const { data: topPages, isLoading: topPagesLoading } = useTopPages(selectedSiteId || undefined, days)
-  const { data: snapshots, isLoading: snapshotsLoading } = useTrafficSnapshots(selectedSiteId || undefined, days)
+  const { data: topPages, isLoading: topPagesLoading } = useTopPages(selectedSiteId || undefined, selection)
+  const { data: snapshots, isLoading: snapshotsLoading } = useTrafficSnapshots(selectedSiteId || undefined, selection)
   // Forecast history needs a longer, stable lookback independent of the
-  // Overview/Snapshots range toggle above — otherwise picking "7d" would
+  // Overview/Snapshots range picker above — otherwise picking "7d" would
   // starve the forecast chart of history too.
-  const { data: forecastHistory } = useTrafficSnapshots(selectedSiteId || undefined, 90)
-  const { data: geo, isLoading: geoLoading } = useGeoBreakdown(selectedSiteId || undefined, days)
+  const { data: forecastHistory } = useTrafficSnapshots(selectedSiteId || undefined, { range: '90d' })
+  const { data: geo, isLoading: geoLoading } = useGeoBreakdown(selectedSiteId || undefined, selection)
   const { data: predictions, isLoading: predictionsLoading } = useTrafficPredictions(selectedSiteId || undefined, horizon)
   const regenerate = useRegeneratePredictions()
   const flush = useFlushTraffic()
@@ -328,7 +355,7 @@ export default function Traffic() {
   }, [collecting, summary, qc])
 
   // Reset pagination whenever the underlying filtered set changes shape
-  useEffect(() => { setSnapshotPage(1) }, [days, sourceFilter, selectedSiteId])
+  useEffect(() => { setSnapshotPage(1) }, [range, customStart, customEnd, sourceFilter, selectedSiteId])
   useEffect(() => { setAlertPage(1) }, [severityFilter, typeFilter, selectedSiteId])
   useEffect(() => { setPredSiteIdx(0) }, [selectedSiteId, horizon])
 
@@ -357,15 +384,21 @@ export default function Traffic() {
     : 0
 
   // Chart series
-  const trendSeries = trend && trend.length > 0
-    ? Array.from(new Set(trend.flatMap((r) => Object.keys(r).filter((k) => k !== 'date'))))
-        .map((key) => ({ key, label: key }))
-    : []
-  const trendFilled = trend?.map((row) => {
-    const r: Record<string, unknown> = { date: row.date }
-    trendSeries.forEach(({ key }) => { r[key] = (row[key] as number) ?? 0 })
-    return r
-  }) ?? []
+  const trendSeries = useMemo(
+    () => trend && trend.length > 0
+      ? Array.from(new Set(trend.flatMap((r) => Object.keys(r).filter((k) => k !== 'date'))))
+          .map((key) => ({ key, label: key }))
+      : [],
+    [trend]
+  )
+  const trendFilled = useMemo(
+    () => trend?.map((row) => {
+      const r: Record<string, unknown> = { date: row.date }
+      trendSeries.forEach(({ key }) => { r[key] = (row[key] as number) ?? 0 })
+      return r
+    }) ?? [],
+    [trend, trendSeries]
+  )
 
   // Snapshots: client-side source filter + sort (dataset is already bounded/fully fetched)
   const filteredSnapshots = useMemo(() => {
@@ -446,10 +479,14 @@ export default function Traffic() {
 
       {/* Controls */}
       <div className="flex items-center justify-between -mt-2 mb-4">
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] font-medium text-text-secondary dark:text-text-secondary-dark uppercase tracking-wide">Range</span>
-          <SegmentedControl value={days} options={RANGE_OPTIONS} onChange={setDays} size="sm" />
-        </div>
+        <RangeControl
+          value={range}
+          onChange={setRange}
+          options={DAILY_RANGE_OPTIONS}
+          customStart={customStart}
+          customEnd={customEnd}
+          onCustomApply={(start, end) => { setCustomStart(start); setCustomEnd(end) }}
+        />
         <Button
           variant="ghost"
           size="sm"
@@ -473,7 +510,7 @@ export default function Traffic() {
       {!collecting && anyStale && (
         <div className="flex items-center gap-2.5 px-4 py-2.5 bg-warning/8 border border-warning/20 rounded-lg text-[12px] text-warning mb-4">
           <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />
-          Some sites haven't synced today's traffic yet — showing the most recent data available.
+          Some sites haven't synced in over a day — showing the most recent data available. Try Flush & Re-run.
         </div>
       )}
 
@@ -536,11 +573,11 @@ export default function Traffic() {
             <Card className="col-span-3">
               <CardHeader className="flex-col items-start gap-2">
                 <div className="flex items-center justify-between w-full">
-                  <CardTitle>{metricLabel} — last {days} days</CardTitle>
+                  <CardTitle>{metricLabel} — {rangeDisplayLabel(range, customStart, customEnd)}</CardTitle>
                   <SegmentedControl value={metric} options={TRAFFIC_METRIC_OPTIONS} onChange={setMetric} size="sm" />
                 </div>
                 <span className="text-[11px] text-text-secondary dark:text-text-secondary-dark">
-                  {summary?.[0]?.source === 'ga4' ? 'Google Analytics · real data' : 'Estimated from post data'}
+                  {summarySourceLabel(summary)}
                 </span>
               </CardHeader>
               <CardContent>
@@ -583,7 +620,7 @@ export default function Traffic() {
                       ))}
                     </div>
                     {s.is_stale && (
-                      <p className="text-[10px] text-warning mt-2">Data as of {s.snapshot_date} — today not synced yet</p>
+                      <p className="text-[10px] text-warning mt-2">Data as of {s.snapshot_date} — sync hasn't updated in 2+ days</p>
                     )}
                     {s.source === 'estimated' && (
                       <p className="text-[10px] text-text-secondary dark:text-text-secondary-dark mt-2">
@@ -603,7 +640,7 @@ export default function Traffic() {
             <CardHeader>
               <CardTitle>Top Pages</CardTitle>
               <span className="text-[11px] text-text-secondary dark:text-text-secondary-dark">
-                Last {days} days{!selectedSiteId ? ' · all sites' : ''}
+                {rangeDisplayLabel(range, customStart, customEnd)}{!selectedSiteId ? ' · all sites' : ''}
               </span>
             </CardHeader>
             <CardContent className="p-0">
@@ -669,7 +706,7 @@ export default function Traffic() {
           <div className="flex items-center justify-between mb-3">
             <SegmentedControl value={sourceFilter} options={SOURCE_OPTIONS} onChange={setSourceFilter} size="sm" />
             <span className="text-[11px] text-text-secondary dark:text-text-secondary-dark">
-              {filteredSnapshots.length} snapshot{filteredSnapshots.length === 1 ? '' : 's'} · last {days} days
+              {filteredSnapshots.length} snapshot{filteredSnapshots.length === 1 ? '' : 's'} · {rangeDisplayLabel(range, customStart, customEnd)}
             </span>
           </div>
           {snapshotsLoading ? (
@@ -742,7 +779,7 @@ export default function Traffic() {
                 <Card>
                   <CardHeader>
                     <CardTitle>By Region</CardTitle>
-                    <span className="text-[11px] text-text-secondary dark:text-text-secondary-dark">Last {days} days</span>
+                    <span className="text-[11px] text-text-secondary dark:text-text-secondary-dark">{rangeDisplayLabel(range, customStart, customEnd)}</span>
                   </CardHeader>
                   <CardContent>
                     <div className="flex flex-col gap-2.5">
@@ -929,7 +966,7 @@ export default function Traffic() {
               <SegmentedControl value={horizon} options={[{ value: 7, label: '7d' }, { value: 14, label: '14d' }, { value: 30, label: '30d' }]} onChange={setHorizon} />
             </div>
             <div className="flex items-center gap-3">
-              {activePred?.generated_at && (
+              {activePred?.generated_at && !activePred.insufficient_data && !activePred.generation_failed && (
                 <span className="text-[11px] text-text-secondary dark:text-text-secondary-dark">
                   Generated {new Date(activePred.generated_at).toLocaleString()}
                 </span>
@@ -973,6 +1010,15 @@ export default function Traffic() {
               <Skeleton className="h-64 w-full" />
               <Skeleton className="h-24 w-full" />
             </div>
+          ) : activePred?.generation_failed ? (
+            <EmptyState
+              title="Prediction generation failed"
+              description="The AI forecast couldn't be generated (usually a transient issue — a rate limit or an API key problem). Your last working forecast, if any, isn't affected."
+              action={{
+                label: 'Regenerate',
+                onClick: () => regenerate.mutate({ site_id: selectedSiteId || undefined, horizon_days: horizon }),
+              }}
+            />
           ) : activePred?.insufficient_data ? (
             <EmptyState
               title="Not enough data"
