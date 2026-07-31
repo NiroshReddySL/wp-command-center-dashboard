@@ -102,6 +102,12 @@ const config: Config = {
         shimmer: 'shimmer 1.5s infinite',
         'fade-in': 'fadeIn 0.2s ease-out',
         'slide-up': 'slideUp 0.2s ease-out',
+        // AI generation states. `ai-sweep` drives a moving gradient across a
+        // border or text; `ai-pulse` is a slow breathing glow. Both are
+        // deliberately slow and low-contrast — a fast, high-contrast loop
+        // reads as an error state and is a vestibular risk.
+        'ai-sweep': 'aiSweep 2.4s ease-in-out infinite',
+        'ai-pulse': 'aiPulse 2s ease-in-out infinite',
       },
       keyframes: {
         shimmer: {
@@ -115,6 +121,14 @@ const config: Config = {
         slideUp: {
           from: { opacity: '0', transform: 'translateY(8px)' },
           to: { opacity: '1', transform: 'translateY(0)' },
+        },
+        aiSweep: {
+          '0%, 100%': { backgroundPosition: '0% 50%' },
+          '50%': { backgroundPosition: '100% 50%' },
+        },
+        aiPulse: {
+          '0%, 100%': { opacity: '0.55', transform: 'scale(1)' },
+          '50%': { opacity: '1', transform: 'scale(1.06)' },
         },
       },
     },

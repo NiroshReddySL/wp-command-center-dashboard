@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, ReactNode } from 'react'
+import { createContext, useContext, useId, useState, ReactNode } from 'react'
 import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
 
@@ -27,7 +27,11 @@ interface TabsProps {
 export function Tabs({ defaultValue, value, children, className, onValueChange }: TabsProps) {
   const [internalActive, setInternalActive] = useState(defaultValue)
   const active = value ?? internalActive
-  const layoutId = `tabs-${Math.random().toString(36).slice(2)}`
+  // Must be stable across renders: framer-motion animates the active-tab
+  // underline by matching layoutId between the old and new position. A fresh
+  // Math.random() every render meant no two renders ever shared an id, so the
+  // indicator jumped instead of sliding.
+  const layoutId = useId()
 
   const setActive = (v: string) => {
     setInternalActive(v)

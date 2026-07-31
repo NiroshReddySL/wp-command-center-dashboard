@@ -65,6 +65,7 @@ export interface ContentPost {
   reading_time_minutes: number
   score_breakdown: Record<string, ScoreCategory>
   ai_recommendation: string | null
+  ai_guidance: PageGuidance | null
 }
 
 export interface ContentPostDetail extends ContentPost {
@@ -203,17 +204,208 @@ export interface ConversionFlow {
   submission_rate: number | null // 0-1, submitted/entered
 }
 
+export interface DeviceShare {
+  device: 'desktop' | 'mobile' | 'tablet' | 'other'
+  users: number
+  pct: number // 0-100
+}
+
 export interface ContentPostAnalytics {
   connected: boolean
   daily_traffic: DailyTrafficPoint[]
+  /** VISITS — sum of per-day active users, so one person returning on three
+   * days counts three times. Drives the daily chart. */
   traffic_30d: number
   traffic_prev_30d: number
   traffic_change_pct: number | null
+  /** Unique PEOPLE over the window. Every funnel step counts people, so this
+   * — not traffic_30d — is the number that matches a route's first stage. */
+  visitors_30d: number
   bounce_rate: number | null // 0-100
   avg_engagement_time: number | null // seconds
+  /** Reader split by device category. Note these are per-device unique
+   * users, so someone who read on both phone and laptop counts in both —
+   * the percentages describe the split, and don't sum to visitors_30d. */
+  devices: DeviceShare[]
   flows: ConversionFlow[]
+  /** Unique converters, measured directly. Never the sum of each route's
+   * `submitted`: routes share one confirmation page, so a visitor who took
+   * more than one route would be counted once per route. */
   total_leads: number | null
   error?: string | null
+}
+
+export interface GuidanceRewrite {
+  proposed: string
+  reason: string
+  length: number
+  /** Whether `proposed` lands in the range Google displays without
+   * truncating. Models drift, so the suggestion is kept either way and the
+   * UI flags it rather than presenting an out-of-spec string as paste-ready. */
+  in_range: boolean
+  optimal: string
+}
+
+export interface ContentGap {
+  topic: string
+  evidence: string
+  add: string
+}
+
+export interface GuidanceFix {
+  problem: string
+  fix: string
+}
+
+export interface PageGuidance {
+  diagnosis: string
+  title: GuidanceRewrite | null
+  meta_description: GuidanceRewrite | null
+  content_gaps: ContentGap[]
+  /** The concrete change that resolves each known problem. Optional so
+   * guidance persisted before this field existed still renders. */
+  fixes?: GuidanceFix[]
+}
+
+export type InsightSeverity = 'critical' | 'warning' | 'info'
+export type InsightSource = 'content' | 'traffic' | 'search' | 'speed'
+
+export interface PageInsight {
+  id: string
+  source: InsightSource
+  severity: InsightSeverity
+  title: string
+  detail: string
+  action: string
+  evidence: string
+  impact: number
+}
+
+export interface PageInsightsResponse {
+  summary: {
+    visitors: number | null
+    leads: number | null
+    search_clicks: number | null
+    search_position: number | null
+    speed_score: number | null
+    speed_strategy: string | null
+  }
+  insights: PageInsight[]
+  sources: InsightSource[]
+}
+
+/** Rule-based analysis — no AI, so it's instant, free and identical for
+ * identical data. One request covers the whole overview (summary numbers +
+ * ranked findings) rather than one per data source. */
+export function usePageInsights(ref: string, siteId?: string | null) {
+  return useQuery({
+    queryKey: ['content-insights', ref, siteId],
+    queryFn: () => get<PageInsightsResponse>(`/optimizer/content-health/${ref}/insights`, {
+      ...(siteId ? { site_id: siteId } : {}),
+    }),
+    enabled: Boolean(ref),
+    staleTime: 5 * 60_000,
+  })
+}
+
+export interface SearchQueryRow {
+  query: string
+  clicks: number
+  impressions: number
+  ctr: number // 0-100
+  position: number
+}
+
+export interface SearchDailyPoint {
+  date: string
+  clicks: number
+  impressions: number
+}
+
+export interface CtrOpportunity {
+  position: number
+  ctr: number
+  typical_ctr: number
+  potential_clicks: number
+}
+
+export interface SearchConsoleData {
+  connected: boolean
+  range_start: string | null
+  range_end: string | null
+  clicks: number
+  impressions: number
+  ctr: number // 0-100
+  position: number
+  clicks_change_pct: number | null
+  impressions_change_pct: number | null
+  /** Raw difference, not a percentage — and the one metric where NEGATIVE
+   * is an improvement (position 8 → 7 is moving up the results). */
+  position_change: number | null
+  daily: SearchDailyPoint[]
+  queries: SearchQueryRow[]
+  striking_distance: SearchQueryRow[]
+  ctr_opportunity: CtrOpportunity | null
+  error?: string | null
+}
+
+export function useSearchConsole(ref: string, siteId?: string | null) {
+  return useQuery({
+    queryKey: ['content-search-console', ref, siteId],
+    queryFn: () => get<SearchConsoleData>(`/optimizer/content-health/${ref}/search-console`, {
+      ...(siteId ? { site_id: siteId } : {}),
+    }),
+    enabled: Boolean(ref),
+    staleTime: 10 * 60_000, // GSC updates daily at best
+  })
+}
+
+export type VitalRating = 'good' | 'needs_work' | 'poor'
+
+export interface PageSpeedMetric {
+  key: string
+  label: string
+  value: number
+  unit: string // "ms" | "" (CLS is unitless)
+  rating: VitalRating | null
+}
+
+export interface PageSpeed {
+  /** False when this page has never been tested — the card offers to run
+   * one rather than showing an error. */
+  tested: boolean
+  score: number | null
+  rating: VitalRating | null
+  strategy: 'mobile' | 'desktop'
+  metrics: PageSpeedMetric[]
+  tested_at: string | null
+  page_url: string | null
+  error?: string | null
+}
+
+/** Cached result only — never triggers a live test, so it can't delay the
+ * page. A real PSI run takes 10-30s; that's what useRunPageSpeed is for. */
+export function usePageSpeed(ref: string, siteId?: string | null) {
+  return useQuery({
+    queryKey: ['content-pagespeed', ref, siteId],
+    queryFn: () => get<PageSpeed>(`/optimizer/content-health/${ref}/pagespeed`, {
+      ...(siteId ? { site_id: siteId } : {}),
+    }),
+    enabled: Boolean(ref),
+    staleTime: 5 * 60_000,
+  })
+}
+
+export function useRunPageSpeed(ref: string, siteId?: string | null) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => post<PageSpeed>(`/optimizer/content-health/${ref}/pagespeed`, undefined, {
+      ...(siteId ? { site_id: siteId } : {}),
+    }),
+    // Seed the cache with the fresh result so the card updates without a
+    // second round trip.
+    onSuccess: (data) => qc.setQueryData(['content-pagespeed', ref, siteId], data),
+  })
 }
 
 export function useContentPostAnalytics(ref: string, siteId?: string | null) {
@@ -276,7 +468,9 @@ export function useRegenerateAI(postId: string) {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: () =>
-      post<{ ai_recommendation: string | null }>(`/optimizer/content-health/${postId}/regenerate-ai`),
+      post<{ ai_recommendation: string | null; ai_guidance: PageGuidance | null; generation_failed: boolean }>(
+        `/optimizer/content-health/${postId}/regenerate-ai`,
+      ),
     onSuccess: () => {
       // Prefix match — the detail page may be keyed by slug rather than id
       qc.invalidateQueries({ queryKey: ['content-post'] })

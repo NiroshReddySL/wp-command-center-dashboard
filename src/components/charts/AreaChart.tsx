@@ -24,6 +24,10 @@ interface AreaChartProps {
   height?: number
   formatter?: (value: number, name: string) => string
   showLegend?: boolean
+  /** Force whole-number y-axis ticks. For counts of things (visitors, posts)
+   * the default auto-scale emits "0.5" / "1.5" whenever the range is small,
+   * and half a visitor is not a quantity that exists. */
+  integerYAxis?: boolean
 }
 
 export default function AreaChart({
@@ -33,6 +37,7 @@ export default function AreaChart({
   height = 240,
   formatter,
   showLegend = false,
+  integerYAxis = false,
 }: AreaChartProps) {
   return (
     <ResponsiveContainer width="100%" height={height}>
@@ -68,6 +73,7 @@ export default function AreaChart({
           tick={{ fontSize: 11, fill: '#707070' }}
           tickLine={false}
           axisLine={false}
+          allowDecimals={!integerYAxis}
           tickFormatter={(v: number) => (v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v.toString())}
         />
         <Tooltip
