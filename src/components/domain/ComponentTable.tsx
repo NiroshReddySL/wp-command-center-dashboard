@@ -4,6 +4,7 @@ import {
   Puzzle, Paintbrush, Trash2, Pencil,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import ConfirmDialog from '@/components/ui/ConfirmDialog'
 import { useDeleteComponent, type SiteComponent } from '@/hooks/useComponents'
 import { STATUS_META, statusOf, type ComponentStatus } from '@/lib/componentStatus'
 import ComponentRowEdit from './ComponentRowEdit'
@@ -38,6 +39,7 @@ function ComponentRow({
   onEdit: () => void
 }) {
   const remove = useDeleteComponent()
+  const [confirming, setConfirming] = useState(false)
   const status = statusOf(c)
   const meta = STATUS_META[status]
   const Icon = STATUS_ICON[status]
@@ -109,12 +111,27 @@ function ComponentRow({
             <button
               aria-label={`Remove ${c.name ?? c.slug}`}
               title={`Remove ${c.name ?? c.slug}`}
-              onClick={() => remove.mutate(c.id)}
+              onClick={() => setConfirming(true)}
               disabled={remove.isPending && remove.variables === c.id}
               className="rounded-md p-1.5 text-text-secondary transition-colors hover:bg-danger/10 hover:text-danger disabled:opacity-50 dark:text-text-secondary-dark"
             >
               <Trash2 className="h-3.5 w-3.5" />
             </button>
+            <ConfirmDialog
+              open={confirming}
+              onCancel={() => setConfirming(false)}
+              onConfirm={() => remove.mutate(c.id, { onSuccess: () => setConfirming(false) })}
+              title={`Remove ${c.name ?? c.slug}?`}
+              confirmLabel="Remove"
+              pending={remove.isPending && remove.variables === c.id}
+            >
+              {/* The distinction that actually matters: this is a record, not
+                  the software. Someone who reads "remove" as "uninstall" would
+                  never click it. */}
+              This only stops WP Command Center tracking the {c.component_type} — it
+              stays installed on your site. Its update and vulnerability findings
+              will be cleared, and you can add it again at any time.
+            </ConfirmDialog>
           </>
         ) : (
           // Read from WordPress: editing here would be overwritten on the very
