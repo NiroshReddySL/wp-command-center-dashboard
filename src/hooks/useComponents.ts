@@ -16,7 +16,11 @@ export interface SiteComponent {
   name: string | null
   installed_version: string
   latest_version: string
-  risk_level: 'critical' | 'high' | 'medium' | 'low'
+  /** Where latest_version came from. "unknown" means the WordPress.org
+   *  directory has no record — normal for premium and in-house components —
+   *  so latest mirrors installed and must NOT be read as "up to date". */
+  latest_source: 'wporg' | 'manual' | 'unknown'
+  risk_level: 'critical' | 'high' | 'medium' | 'low' | 'unknown'
   /** null means "not known" — distinct from "installed but inactive". */
   is_active: boolean | null
   source: 'wordpress' | 'manual'
@@ -31,7 +35,33 @@ export interface ComponentInput {
   slug: string
   name?: string
   installed_version: string
+  /** Only needed for components WordPress.org does not list — the operator is
+   *  then the sole authority on what the newest release is. */
+  latest_version?: string
   is_active?: boolean | null
+}
+
+export interface ComponentLookup {
+  slug: string
+  found: boolean
+  latest_version: string | null
+}
+
+/** Resolve a slug against WordPress.org before saving, so the form can say
+ *  up front whether the operator needs to supply the latest version. */
+export function useComponentLookup(slug: string, componentType: 'plugin' | 'theme') {
+  const cleaned = slug.trim()
+  return useQuery({
+    queryKey: ['component-lookup', componentType, cleaned.toLowerCase()],
+    queryFn: () =>
+      get<ComponentLookup>('/watchdog/components/lookup', {
+        slug: cleaned,
+        component_type: componentType,
+      }),
+    enabled: cleaned.length >= 2,
+    staleTime: 5 * 60_000,
+    retry: false,
+  })
 }
 
 export function useComponents(siteId?: string) {

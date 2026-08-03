@@ -1,40 +1,50 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { Check, Loader2, Info } from 'lucide-react'
 import Button from '@/components/ui/Button'
 import Select from '@/components/ui/Select'
-import { useAddComponent, type ComponentInput } from '@/hooks/useComponents'
+import { cn } from '@/lib/utils'
+import { useAddComponent, useComponentLookup, type ComponentInput } from '@/hooks/useComponents'
 
-const ACTIVE_OPTIONS = [
-  { value: 'unknown', label: 'Not sure' },
-  { value: 'active', label: 'Active' },
-  { value: 'inactive', label: 'Installed, not active' },
-]
+const FIELD =
+  'h-9 w-full rounded-md border border-border bg-card px-3 text-[13px] text-text-primary transition-colors placeholder:text-text-secondary focus:border-secondary focus:outline-none focus:ring-2 focus:ring-secondary/15 dark:border-border-dark dark:bg-card-dark dark:text-text-primary-dark'
 
 /**
  * Records one plugin or theme by hand.
  *
- * The slug matters more than the name: it is the key WordPress.org and WPScan
- * are queried with, so "akismet" finds updates and CVEs where "Akismet
- * Anti-Spam" finds nothing at all. The version matters just as much — a CVE
- * only applies to the versions it was not fixed in.
+ * The slug leads because it is the key WordPress.org and WPScan are queried
+ * with — "akismet" finds updates and CVEs where "Akismet Anti-Spam" finds
+ * nothing. It is resolved live as it is typed, which answers the question
+ * that actually matters up front: does the directory know this component? For
+ * premium and in-house builds — Avada, Swift Performance — it never will, and
+ * the operator has to supply the latest version themselves or the component
+ * would sit at "up to date" forever.
  */
 export default function ComponentForm({
-  siteId,
-  onDone,
+  siteId, onDone,
 }: {
   siteId: string
   onDone: () => void
 }) {
   const add = useAddComponent()
-  const [form, setForm] = useState({
-    component_type: 'plugin' as ComponentInput['component_type'],
-    slug: '',
-    name: '',
-    installed_version: '',
-    active: 'unknown',
-  })
+  const [type, setType] = useState<ComponentInput['component_type']>('plugin')
+  const [slug, setSlug] = useState('')
+  const [name, setName] = useState('')
+  const [installed, setInstalled] = useState('')
+  const [latest, setLatest] = useState('')
+  const [active, setActive] = useState('unknown')
   const [error, setError] = useState<string | null>(null)
 
-  const canSubmit = form.slug.trim() !== '' && form.installed_version.trim() !== ''
+  const [debounced, setDebounced] = useState('')
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(slug), 400)
+    return () => clearTimeout(t)
+  }, [slug])
+
+  const { data: lookup, isFetching } = useComponentLookup(debounced, type)
+  const resolved = lookup && lookup.slug === debounced.trim().toLowerCase().replace(/\/.*$/, '')
+  const notListed = !!lookup && !lookup.found && !isFetching
+
+  const canSubmit = slug.trim() !== '' && installed.trim() !== ''
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -42,12 +52,12 @@ export default function ComponentForm({
     try {
       await add.mutateAsync({
         site_id: siteId,
-        component_type: form.component_type,
-        slug: form.slug.trim(),
-        name: form.name.trim() || undefined,
-        installed_version: form.installed_version.trim(),
-        is_active:
-          form.active === 'unknown' ? null : form.active === 'active',
+        component_type: type,
+        slug: slug.trim(),
+        name: name.trim() || undefined,
+        installed_version: installed.trim(),
+        latest_version: latest.trim() || undefined,
+        is_active: active === 'unknown' ? null : active === 'active',
       })
       onDone()
     } catch (err) {
@@ -56,89 +66,102 @@ export default function ComponentForm({
     }
   }
 
-  const field =
-    'w-full rounded-md border border-border dark:border-border-dark bg-card dark:bg-card-dark px-3 py-2 text-[13px] text-text-primary dark:text-text-primary-dark placeholder:text-text-secondary focus:border-primary focus:outline-none'
-
   return (
     <form
       onSubmit={submit}
-      className="mb-4 rounded-lg border border-border dark:border-border-dark bg-surface/40 dark:bg-surface-dark p-4"
+      className="mb-4 rounded-lg border border-border bg-surface/40 p-4 dark:border-border-dark dark:bg-surface-dark"
     >
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        <label className="flex flex-col gap-1">
-          <span className="text-[11px] font-medium text-text-secondary dark:text-text-secondary-dark">Type</span>
-          <Select
-            value={form.component_type}
-            onChange={(e) =>
-              setForm({ ...form, component_type: e.target.value as ComponentInput['component_type'] })
-            }
-          >
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Field label="Type">
+          <Select value={type} onChange={(e) => setType(e.target.value as ComponentInput['component_type'])}>
             <option value="plugin">Plugin</option>
             <option value="theme">Theme</option>
           </Select>
-        </label>
+        </Field>
 
-        <label className="flex flex-col gap-1">
-          <span className="text-[11px] font-medium text-text-secondary dark:text-text-secondary-dark">
-            Slug <span className="text-danger">*</span>
-          </span>
+        <Field label="Slug" required>
           <input
-            className={field}
-            value={form.slug}
-            onChange={(e) => setForm({ ...form, slug: e.target.value })}
+            className={FIELD}
+            value={slug}
+            onChange={(e) => setSlug(e.target.value)}
             placeholder="akismet"
             required
           />
-        </label>
+        </Field>
 
-        <label className="flex flex-col gap-1">
-          <span className="text-[11px] font-medium text-text-secondary dark:text-text-secondary-dark">Name</span>
+        <Field label="Name">
           <input
-            className={field}
-            value={form.name}
-            onChange={(e) => setForm({ ...form, name: e.target.value })}
-            placeholder="Akismet Anti-Spam"
+            className={FIELD}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder={(resolved && lookup?.found && 'From the directory') || 'Akismet Anti-Spam'}
           />
-        </label>
+        </Field>
 
-        <label className="flex flex-col gap-1">
-          <span className="text-[11px] font-medium text-text-secondary dark:text-text-secondary-dark">
-            Version <span className="text-danger">*</span>
-          </span>
+        <Field label="Installed version" required>
           <input
-            className={field}
-            value={form.installed_version}
-            onChange={(e) => setForm({ ...form, installed_version: e.target.value })}
+            className={FIELD}
+            value={installed}
+            onChange={(e) => setInstalled(e.target.value)}
             placeholder="5.3"
             required
           />
-        </label>
-
-        <label className="flex flex-col gap-1">
-          <span className="text-[11px] font-medium text-text-secondary dark:text-text-secondary-dark">State</span>
-          <Select
-            value={form.active}
-            onChange={(e) => setForm({ ...form, active: e.target.value })}
-          >
-            {ACTIVE_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>{o.label}</option>
-            ))}
-          </Select>
-        </label>
+        </Field>
       </div>
 
-      <p className="mt-2 text-[11px] text-text-secondary dark:text-text-secondary-dark">
-        The slug is the WordPress.org directory name — it&apos;s what update and
-        vulnerability lookups key on.
-      </p>
+      {/* Live directory result — the answer to "will this be auditable?" */}
+      <div className="mt-2 min-h-[20px] text-[12px]">
+        {isFetching && debounced.trim().length >= 2 && (
+          <span className="inline-flex items-center gap-1.5 text-text-secondary dark:text-text-secondary-dark">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            Checking WordPress.org…
+          </span>
+        )}
+        {!isFetching && resolved && lookup?.found && (
+          <span className="inline-flex items-center gap-1.5 text-success">
+            <Check className="h-3 w-3" />
+            Found on WordPress.org — latest is v{lookup.latest_version}. Updates will be tracked automatically.
+          </span>
+        )}
+        {notListed && resolved && (
+          <span className="inline-flex items-start gap-1.5 text-text-secondary dark:text-text-secondary-dark">
+            <Info className="mt-0.5 h-3 w-3 shrink-0" />
+            <span>
+              Not in the WordPress.org directory — normal for premium or custom components.
+              Add the latest version below, or it will show as <em>Not tracked</em> rather than
+              being reported as up to date.
+            </span>
+          </span>
+        )}
+      </div>
 
-      {error && (
-        <p role="alert" className="mt-2 text-[12px] text-danger">
-          {error}
-        </p>
+      {/* Only asked for when it is genuinely needed */}
+      {notListed && (
+        <div className="mt-3 max-w-xs">
+          <Field label="Latest version (from the vendor)">
+            <input
+              className={cn(FIELD, 'font-mono')}
+              value={latest}
+              onChange={(e) => setLatest(e.target.value)}
+              placeholder="7.11.0"
+            />
+          </Field>
+        </div>
       )}
 
-      <div className="mt-3 flex items-center gap-2">
+      <div className="mt-3 max-w-xs">
+        <Field label="State">
+          <Select value={active} onChange={(e) => setActive(e.target.value)}>
+            <option value="unknown">Not sure</option>
+            <option value="active">Active</option>
+            <option value="inactive">Installed, not active</option>
+          </Select>
+        </Field>
+      </div>
+
+      {error && <p role="alert" className="mt-2 text-[12px] text-danger">{error}</p>}
+
+      <div className="mt-4 flex items-center gap-2">
         <Button type="submit" size="sm" disabled={!canSubmit || add.isPending}>
           {add.isPending ? 'Saving…' : 'Save component'}
         </Button>
@@ -147,5 +170,22 @@ export default function ComponentForm({
         </Button>
       </div>
     </form>
+  )
+}
+
+function Field({
+  label, required, children,
+}: {
+  label: string
+  required?: boolean
+  children: React.ReactNode
+}) {
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="text-[11px] font-medium text-text-secondary dark:text-text-secondary-dark">
+        {label} {required && <span className="text-danger">*</span>}
+      </span>
+      {children}
+    </label>
   )
 }
