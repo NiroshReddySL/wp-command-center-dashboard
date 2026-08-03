@@ -23,6 +23,10 @@ interface AlertFilters {
   agent?: AgentType
   status?: string
   type?: string
+  /** Tab grouping — one bucket can span several alert-type prefixes
+   *  ("component" covers plugins, themes and their audit notices), which the
+   *  substring `type` filter cannot express. */
+  bucket?: string
   limit?: number
   offset?: number
 }

@@ -12,6 +12,7 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@
 import Skeleton from '@/components/ui/Skeleton'
 import EmptyState from '@/components/ui/EmptyState'
 import PluginRiskRow from '@/components/domain/PluginRiskRow'
+import ComponentInventory from '@/components/domain/ComponentInventory'
 import QueryError from '@/components/ui/QueryError'
 import { useAlerts, useWatchdogSummary, useWatchdogLastRun, useAcknowledgeAlert, useDismissAlert } from '@/hooks/useAlerts'
 import type { Alert, WatchdogRun } from '@/hooks/useAlerts'
@@ -26,14 +27,7 @@ const TAB_LABELS: Record<Tab, string> = {
   'all': 'All Issues',
   'broken-links': 'Broken Links',
   'performance': 'Performance',
-  'plugins': 'Plugins',
-}
-
-const TAB_TYPE_FILTER: Record<Tab, string | undefined> = {
-  'all': undefined,
-  'broken-links': 'broken_link',
-  'performance': 'performance',
-  'plugins': 'plugin',
+  'plugins': 'Plugins & Themes',
 }
 
 const MODULE_MAP: Record<Tab, string | undefined> = {
@@ -43,12 +37,15 @@ const MODULE_MAP: Record<Tab, string | undefined> = {
   'plugins': 'plugins',
 }
 
-// Summary buckets (exact server-side counts) per tab
+// Server-side bucket per tab: names the exact summary counts AND the list
+// filter, so a tab's badge and its rows can never come from different rules.
+// "component" spans plugins, themes and their audit notices — which the old
+// substring type filter could not express.
 const TAB_BUCKET: Record<Tab, string | undefined> = {
   'all': undefined,
   'broken-links': 'broken_link',
   'performance': 'performance',
-  'plugins': 'plugin',
+  'plugins': 'component',
 }
 
 export default function Watchdog() {
@@ -71,7 +68,7 @@ export default function Watchdog() {
     agent: 'watchdog',
     site_id: selectedSiteId || undefined,
     severity: severityFilter || undefined,
-    type: TAB_TYPE_FILTER[activeTab],
+    bucket: TAB_BUCKET[activeTab],
     limit: PAGE_SIZE,
     offset: (page - 1) * PAGE_SIZE,
   }, refreshing)
@@ -197,14 +194,17 @@ export default function Watchdog() {
         </TabsContent>
 
         <TabsContent value="plugins">
+          <div className="mb-4">
+            <ComponentInventory siteId={selectedSiteId || undefined} />
+          </div>
           {isError ? null : isLoading ? (
             <div className="flex flex-col gap-1">
               {[...Array(5)].map((_, i) => <Skeleton key={i} className="h-14 w-full" />)}
             </div>
           ) : pagedAlerts.length === 0 ? (
             <EmptyState
-              title="No plugin issues"
-              description="All your plugins are up to date and secure."
+              title="No plugin or theme issues"
+              description="Everything tracked above is current, with no known vulnerabilities."
             />
           ) : (
             <div className="bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-lg divide-y divide-border dark:divide-border-dark">
