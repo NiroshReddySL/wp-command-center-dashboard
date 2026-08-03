@@ -11,8 +11,8 @@ import StatusDot from '@/components/ui/StatusDot'
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '@/components/ui/Table'
 import Skeleton from '@/components/ui/Skeleton'
 import EmptyState from '@/components/ui/EmptyState'
-import PluginRiskRow from '@/components/domain/PluginRiskRow'
 import ComponentInventory from '@/components/domain/ComponentInventory'
+import ComponentNotices from '@/components/domain/ComponentNotices'
 import QueryError from '@/components/ui/QueryError'
 import { useAlerts, useWatchdogSummary, useWatchdogLastRun, useAcknowledgeAlert, useDismissAlert } from '@/hooks/useAlerts'
 import type { Alert, WatchdogRun } from '@/hooks/useAlerts'
@@ -194,39 +194,15 @@ export default function Watchdog() {
         </TabsContent>
 
         <TabsContent value="plugins">
-          <div className="mb-4">
-            <ComponentInventory siteId={selectedSiteId || undefined} />
-          </div>
-          {isError ? null : isLoading ? (
-            <div className="flex flex-col gap-1">
-              {[...Array(5)].map((_, i) => <Skeleton key={i} className="h-14 w-full" />)}
-            </div>
-          ) : pagedAlerts.length === 0 ? (
-            <EmptyState
-              title="No plugin or theme issues"
-              description="Everything tracked above is current, with no known vulnerabilities."
-            />
-          ) : (
-            <div className="bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-lg divide-y divide-border dark:divide-border-dark">
-              {pagedAlerts.map((alert) => (
-                <PluginRiskRow
-                  key={alert.id}
-                  plugin={{
-                    id: alert.id,
-                    plugin_slug: (alert.metadata?.plugin_slug as string) ?? 'unknown',
-                    plugin_name: (alert.metadata?.plugin_name as string) ?? undefined,
-                    installed_version: (alert.metadata?.installed_version as string) ?? '—',
-                    latest_version: (alert.metadata?.latest_version as string) ?? '—',
-                    risk_level: alert.type === 'plugin_vulnerable' ? 'critical'
-                      : alert.severity === 'warning' ? 'medium' : 'low',
-                    sites_affected: (alert.metadata?.sites_affected as number) ?? 1,
-                    vulnerability_details: alert.metadata?.vulnerability as { description?: string } | undefined,
-                  }}
-                />
-              ))}
-            </div>
-          )}
-          <Pagination page={page} total={viewTotal} pageSize={PAGE_SIZE} onPageChange={setPage} />
+          {/* Site-level findings about the audit itself. Kept separate from
+              the inventory because they are not components — rendering them
+              as one produced a nameless "unknown · v—" row. */}
+          <ComponentNotices siteId={selectedSiteId || undefined} />
+          {/* Single source of truth for components. The alert list that used
+              to sit here repeated the same plugins with less information, and
+              the two disagreeing was what made the tab confusing. Their
+              alerts remain triageable under All Issues. */}
+          <ComponentInventory siteId={selectedSiteId || undefined} />
         </TabsContent>
       </Tabs>
       {selectedAlert && <AlertDetailModal alert={selectedAlert} onClose={() => setSelectedAlert(null)} />}

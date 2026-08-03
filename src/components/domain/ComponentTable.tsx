@@ -49,13 +49,26 @@ function ComponentRow({
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 bg-card px-4 py-3 transition-colors hover:bg-surface/40 dark:bg-card-dark dark:hover:bg-surface-dark/50">
       <div className="flex min-w-0 flex-1 basis-64 items-center gap-2.5">
-        <TypeIcon className="h-4 w-4 shrink-0 text-text-secondary dark:text-text-secondary-dark" />
+        <span
+          className={cn(
+            'flex h-7 w-7 shrink-0 items-center justify-center rounded-md',
+            c.component_type === 'theme'
+              ? 'bg-secondary/15 text-primary dark:text-primary-dark'
+              : 'bg-surface text-text-secondary dark:bg-surface-dark dark:text-text-secondary-dark'
+          )}
+        >
+          <TypeIcon className="h-3.5 w-3.5" />
+        </span>
         <div className="min-w-0">
           <p className="truncate text-[13px] font-medium text-text-primary dark:text-text-primary-dark">
             {c.name ?? c.slug}
           </p>
-          <p className="truncate font-mono text-[11px] text-text-secondary dark:text-text-secondary-dark">
-            {c.slug}
+          <p className="flex items-center gap-1.5 text-[11px] text-text-secondary dark:text-text-secondary-dark">
+            {/* Spelled out, not just an icon: a theme and a plugin can share a
+                slug, and telling them apart is the whole reason both are here. */}
+            <span className="font-medium uppercase tracking-wide">{c.component_type}</span>
+            <span aria-hidden>·</span>
+            <span className="truncate font-mono">{c.slug}</span>
           </p>
         </div>
       </div>
