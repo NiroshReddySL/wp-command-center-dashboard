@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { ExternalLink, RefreshCw, X, Loader2 } from 'lucide-react'
+import { ExternalLink, RefreshCw, X, Loader2, AlertTriangle } from 'lucide-react'
 import { post } from '@/lib/api'
 import Pagination from '@/components/ui/Pagination'
 import PageShell from '@/components/layout/PageShell'
@@ -13,8 +13,8 @@ import Skeleton from '@/components/ui/Skeleton'
 import EmptyState from '@/components/ui/EmptyState'
 import PluginRiskRow from '@/components/domain/PluginRiskRow'
 import QueryError from '@/components/ui/QueryError'
-import { useAlerts, useWatchdogSummary, useAcknowledgeAlert, useDismissAlert } from '@/hooks/useAlerts'
-import type { Alert } from '@/hooks/useAlerts'
+import { useAlerts, useWatchdogSummary, useWatchdogLastRun, useAcknowledgeAlert, useDismissAlert } from '@/hooks/useAlerts'
+import type { Alert, WatchdogRun } from '@/hooks/useAlerts'
 import { useSiteContext } from '@/contexts/SiteContext'
 import { formatMs, timeAgo } from '@/lib/utils'
 import type { Severity } from '@/lib/constants'
@@ -65,6 +65,7 @@ export default function Watchdog() {
 
   // Exact counts for badges + pagination totals (never from a capped list)
   const { data: summary } = useWatchdogSummary(selectedSiteId || undefined, refreshing)
+  const { data: lastRun } = useWatchdogLastRun(refreshing)
   // Server-side pagination — enterprise sites can have thousands of alerts
   const { data: alerts, isLoading, isError, refetch } = useAlerts({
     agent: 'watchdog',
@@ -97,10 +98,9 @@ export default function Watchdog() {
       ? (severityFilter ? summary.matrix[bucket]?.[severityFilter] ?? 0 : summary.by_type[bucket] ?? 0)
       : (severityFilter ? summary.by_severity[severityFilter] ?? 0 : summary.total)
 
+  // One server-filtered page of rows. The active tab decides the `type`
+  // filter above, so every tab panel renders this same list.
   const pagedAlerts = alerts ?? []
-  const pluginAlerts = pagedAlerts
-  const brokenLinkAlerts = pagedAlerts
-  const perfAlerts = pagedAlerts
 
   const handleFlush = async () => {
     setFlushing(true)
@@ -179,6 +179,7 @@ export default function Watchdog() {
 
         {/* An unreachable API must read as an outage, never as "all healthy" */}
         {isError && <QueryError what="watchdog alerts" onRetry={() => refetch()} className="mb-4" />}
+        {!!lastRun?.failure_count && <RunFailureNotice run={lastRun} />}
 
         <TabsContent value="all">
           {!isError && <AlertsTable alerts={pagedAlerts} isLoading={isLoading} onView={setSelectedAlert} />}
@@ -186,12 +187,12 @@ export default function Watchdog() {
         </TabsContent>
 
         <TabsContent value="broken-links">
-          {!isError && <BrokenLinksTable alerts={brokenLinkAlerts} isLoading={isLoading} onView={setSelectedAlert} />}
+          {!isError && <BrokenLinksTable alerts={pagedAlerts} isLoading={isLoading} onView={setSelectedAlert} />}
           <Pagination page={page} total={viewTotal} pageSize={PAGE_SIZE} onPageChange={setPage} />
         </TabsContent>
 
         <TabsContent value="performance">
-          {!isError && <PerformanceTable alerts={perfAlerts} isLoading={isLoading} onView={setSelectedAlert} />}
+          {!isError && <PerformanceTable alerts={pagedAlerts} isLoading={isLoading} onView={setSelectedAlert} />}
           <Pagination page={page} total={viewTotal} pageSize={PAGE_SIZE} onPageChange={setPage} />
         </TabsContent>
 
@@ -200,14 +201,14 @@ export default function Watchdog() {
             <div className="flex flex-col gap-1">
               {[...Array(5)].map((_, i) => <Skeleton key={i} className="h-14 w-full" />)}
             </div>
-          ) : pluginAlerts.length === 0 ? (
+          ) : pagedAlerts.length === 0 ? (
             <EmptyState
               title="No plugin issues"
               description="All your plugins are up to date and secure."
             />
           ) : (
             <div className="bg-card dark:bg-card-dark border border-border dark:border-border-dark rounded-lg divide-y divide-border dark:divide-border-dark">
-              {pluginAlerts.map((alert) => (
+              {pagedAlerts.map((alert) => (
                 <PluginRiskRow
                   key={alert.id}
                   plugin={{
@@ -582,6 +583,50 @@ function AlertDetailModal({ alert, onClose }: { alert: Alert; onClose: () => voi
             Dismiss
           </Button>
           <Button variant="ghost" size="sm" className="ml-auto" onClick={onClose}>Close</Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+
+/**
+ * A re-run that partly failed must say so. The agents reconcile alerts in
+ * place, so a crashed run simply leaves the previous findings on screen —
+ * without this banner that is indistinguishable from a clean bill of health.
+ */
+function RunFailureNotice({ run }: { run: WatchdogRun }) {
+  const count = run.failure_count ?? 0
+  return (
+    <div
+      role="alert"
+      className="mb-4 rounded-xl border border-warning/25 bg-warning/5 p-4"
+    >
+      <div className="flex items-start gap-3">
+        <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-warning/10 text-warning">
+          <AlertTriangle className="h-[18px] w-[18px]" />
+        </span>
+        <div className="min-w-0">
+          <p className="text-[13px] font-medium text-text-primary dark:text-text-primary-dark">
+            {count} check{count === 1 ? '' : 's'} failed during the last re-run
+          </p>
+          <p className="mt-0.5 text-[12px] text-text-secondary dark:text-text-secondary-dark">
+            Results below are from the previous successful run and may be out of date
+            {run.finished_at ? ` — last attempt ${timeAgo(run.finished_at)}` : ''}.
+          </p>
+          {!!run.failures?.length && (
+            <ul className="mt-2 space-y-1">
+              {run.failures.map((f) => (
+                <li
+                  key={f}
+                  className="truncate font-mono text-[11px] text-text-secondary dark:text-text-secondary-dark"
+                  title={f}
+                >
+                  {f}
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       </div>
     </div>

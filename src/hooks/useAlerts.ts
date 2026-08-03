@@ -54,6 +54,25 @@ export function useWatchdogSummary(siteId?: string, fastPoll = false) {
   })
 }
 
+export interface WatchdogRun {
+  finished_at?: string
+  agents_succeeded?: number
+  failures?: string[]
+  failure_count?: number
+}
+
+/** Outcome of the last re-run. Without this an empty alert list is
+ *  indistinguishable from "the re-run crashed", and the page says the sites
+ *  are healthy either way. */
+export function useWatchdogLastRun(fastPoll = false) {
+  return useQuery({
+    queryKey: ['watchdog-last-run'],
+    queryFn: () => get<WatchdogRun>('/watchdog/last-run'),
+    staleTime: fastPoll ? 0 : 15_000,
+    refetchInterval: fastPoll ? 5_000 : 60_000,
+  })
+}
+
 function invalidateAlertViews(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: ['alerts'] })
   qc.invalidateQueries({ queryKey: ['watchdog-summary'] })
