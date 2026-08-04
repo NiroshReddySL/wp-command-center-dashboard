@@ -160,10 +160,16 @@ function GoogleIntegrationCard() {
       <CardContent className="flex flex-col gap-5">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div className={`h-2 w-2 rounded-full ${status?.connected ? 'bg-success' : 'bg-border dark:bg-border-dark'}`} />
+            <div className={`h-2 w-2 rounded-full ${
+              !status?.connected ? 'bg-border dark:bg-border-dark'
+              : status.missing_scopes?.length ? 'bg-warning' : 'bg-success'
+            }`} />
             <div>
               <span className="text-[13px] text-text-primary dark:text-text-primary-dark">
-                {isLoading ? 'Checking…' : status?.connected ? 'Connected to Google' : 'Not connected'}
+                {isLoading ? 'Checking…'
+                  : !status?.connected ? 'Not connected'
+                  : status.missing_scopes?.length ? 'Connected, but missing permissions'
+                  : 'Connected to Google'}
               </span>
               {status?.connected && status.expires_at && (
                 <p className="text-[11px] text-text-secondary dark:text-text-secondary-dark">
@@ -187,6 +193,27 @@ function GoogleIntegrationCard() {
             <Button variant="primary" size="sm" onClick={handleConnect}>Connect Google</Button>
           )}
         </div>
+
+        {!!status?.missing_scopes?.length && (
+          <div role="alert" className="rounded-lg border border-warning/25 bg-warning/5 p-3">
+            <p className="text-[12px] font-medium text-text-primary dark:text-text-primary-dark">
+              {!status.analytics && !status.search_console
+                ? 'Analytics and Search Console access was not granted'
+                : !status.analytics
+                  ? 'Analytics access was not granted'
+                  : 'Search Console access was not granted'}
+            </p>
+            <p className="mt-1 text-[11px] leading-relaxed text-text-secondary dark:text-text-secondary-dark">
+              The connection works, but Google refuses every data request with a
+              permissions error, so traffic, flows and Search Console panels stay
+              empty. Reconnect and make sure the Google Analytics and Search
+              Console checkboxes stay ticked on the consent screen.
+            </p>
+            <Button variant="primary" size="sm" onClick={handleConnect} className="mt-2.5">
+              Reconnect Google
+            </Button>
+          </div>
+        )}
 
         {refreshOk && (
           <p className="text-[11px] text-success flex items-center gap-1">

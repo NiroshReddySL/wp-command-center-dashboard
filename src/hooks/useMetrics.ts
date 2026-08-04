@@ -56,6 +56,12 @@ export interface GoogleStatus {
   connected: boolean
   scopes: string[]
   expires_at: string | null
+  /** A token can exist and still be refused by every data call. These say
+   *  what it can actually do — Google's consent screen lets the sensitive
+   *  Analytics and Search Console scopes be declined individually. */
+  analytics: boolean
+  search_console: boolean
+  missing_scopes: string[]
 }
 
 export interface AgentSummary {
