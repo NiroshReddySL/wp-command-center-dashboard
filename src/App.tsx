@@ -17,6 +17,7 @@ const Traffic = lazy(() => import('@/pages/Traffic'))
 const LiveVisitors = lazy(() => import('@/pages/LiveVisitors'))
 const Flows = lazy(() => import('@/pages/Flows'))
 const ContentPostDetail = lazy(() => import('@/pages/ContentPostDetail'))
+const Reports = lazy(() => import('@/pages/Reports'))
 const NotFound = lazy(() => import('@/pages/NotFound'))
 
 function PageFallback() {
@@ -57,6 +58,7 @@ export default function App() {
             <Route path="/traffic" element={<Traffic />} />
             <Route path="/live-visitors" element={<LiveVisitors />} />
             <Route path="/flows" element={<Flows />} />
+            <Route path="/reports" element={<Reports />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="*" element={<NotFound />} />
           </Route>

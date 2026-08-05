@@ -1,6 +1,6 @@
 import {
   LayoutDashboard, Shield, TrendingUp, Zap, ClipboardCheck,
-  Settings, BarChart2, Radio, GitBranch,
+  Settings, BarChart2, Radio, GitBranch, FileText,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
@@ -29,6 +29,7 @@ export const navItems: NavItem[] = [
   { label: 'Optimizer', icon: TrendingUp, to: '/optimizer' },
   { label: 'Autopilot', icon: Zap, to: '/autopilot' },
   { label: 'Review Queue', icon: ClipboardCheck, to: '/review' },
+  { label: 'Reports', icon: FileText, to: '/reports' },
 ]
 
 export const bottomItems: NavItem[] = [
