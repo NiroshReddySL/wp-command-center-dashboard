@@ -76,8 +76,13 @@ export default function Reports() {
           description="Generate one to capture what is true about this site right now."
         />
       ) : (
-        <div className="grid gap-6 lg:grid-cols-[260px_1fr]">
-          <aside className="flex flex-col gap-1">
+        <div className="grid gap-6 lg:grid-cols-[260px_minmax(0,1fr)]">
+          {/* minmax(0,1fr) rather than 1fr: a grid item defaults to
+              min-width:auto, so a wide table sets the track's floor and
+              pushes the whole page sideways — which also renders the tables'
+              own overflow-x-auto useless, since the parent never needs to
+              scroll. */}
+          <aside className="flex min-w-0 flex-col gap-1">
             {reports.map((r) => {
               const active = r.id === currentId
               return (
@@ -108,7 +113,7 @@ export default function Reports() {
             })}
           </aside>
 
-          <div>
+          <div className="min-w-0">
             {loadingReport || !report ? (
               <Skeleton className="h-96 w-full" />
             ) : (

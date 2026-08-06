@@ -14,7 +14,7 @@ const fmt = (v: number | string | null) =>
 
 export default function ReportSection({ section }: { section: Section }) {
   return (
-    <section className="border-t border-border py-8 dark:border-border-dark">
+    <section className="min-w-0 border-t border-border py-8 dark:border-border-dark">
       <p className="text-[11px] font-bold uppercase tracking-widest text-primary dark:text-primary-dark">
         {section.number} / {section.title}
       </p>
@@ -88,7 +88,18 @@ export default function ReportSection({ section }: { section: Section }) {
                     {t.rows.map((row) => (
                       <tr key={row.join('|')} className="border-t border-border dark:border-border-dark">
                         {row.map((cell, i) => (
-                          <td key={i} className={cn('px-3 py-2 text-text-primary dark:text-text-primary-dark', i > 0 && 'whitespace-nowrap tabular-nums')}>
+                          <td
+                            key={i}
+                            className={cn(
+                              'px-3 py-2 text-text-primary dark:text-text-primary-dark',
+                              i > 0
+                                ? 'whitespace-nowrap tabular-nums'
+                                // First column carries URLs and queries. Left
+                                // to itself an unbroken path sets the table's
+                                // intrinsic width and nothing else fits.
+                                : 'max-w-[26rem] break-words'
+                            )}
+                          >
                             {cell}
                           </td>
                         ))}
