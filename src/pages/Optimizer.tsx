@@ -18,10 +18,12 @@ import Button from '@/components/ui/Button'
 import Select from '@/components/ui/Select'
 import Pagination from '@/components/ui/Pagination'
 import SeoOpportunityCard, { type SeoOpportunity } from '@/components/domain/SeoOpportunityCard'
+import BulkRescanBar from '@/components/domain/BulkRescanBar'
 import ContentScoreBar from '@/components/domain/ContentScoreBar'
 import { useSiteContext } from '@/contexts/SiteContext'
 import {
   useContentHealth, useRescanPost, isPostGoneError, rescanErrorDetail,
+  useBulkRescan, useBulkRescanStatus,
   isRateLimitedError, retryAfterSeconds,
   CONTENT_TYPE_OPTIONS, HEALTH_STATUS_OPTIONS, ANALYZED_OPTIONS, ISSUE_CATEGORY_OPTIONS,
   type ContentSortBy, type SortDir, type ContentTypeFilter, type HealthStatusFilter, type AnalyzedFilter,
@@ -678,6 +680,49 @@ export default function Optimizer() {
   // site holds thousands of rows; a client-side re-slice would only ever see
   // whatever single page happened to be fetched).
   const contentRows = contentHealth?.items ?? []
+
+  // ── Bulk rescan selection ──────────────────────────────────────────────
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const bulkRescan = useBulkRescan()
+  // Poll only while a batch is actually in flight.
+  const [watching, setWatching] = useState(false)
+  const { data: bulkStatus } = useBulkRescanStatus(watching)
+
+  // Stop polling once the batch settles, so an idle page is not asking.
+  useEffect(() => {
+    if (watching && bulkStatus && !bulkStatus.running && bulkStatus.finished_at) {
+      setWatching(false)
+    }
+  }, [watching, bulkStatus])
+
+  const pageIds = contentRows.map((p) => p.id)
+  const allOnPageSelected = pageIds.length > 0 && pageIds.every((id) => selected.has(id))
+  const someOnPageSelected = pageIds.some((id) => selected.has(id))
+
+  const toggleOne = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+
+  // Adds or removes only the rows on screen, leaving a selection made on
+  // another page of results intact.
+  const toggleAllOnPage = () =>
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (allOnPageSelected) pageIds.forEach((id) => next.delete(id))
+      else pageIds.forEach((id) => next.add(id))
+      return next
+    })
+
+  const handleBulkRescan = async () => {
+    if (!selected.size) return
+    await bulkRescan.mutateAsync([...selected])
+    setSelected(new Set())
+    setWatching(true)
+  }
   const contentTotal = contentHealth?.total ?? 0
 
   const activeContentFilterChips: { key: string; label: string; onRemove: () => void }[] = [
@@ -851,6 +896,13 @@ export default function Optimizer() {
           )}
           {/* contentLoading only shows a skeleton on the very first load — page/search
               changes keep the previous page visible via placeholderData (no flash) */}
+          <BulkRescanBar
+            selectedCount={selected.size}
+            onClear={() => setSelected(new Set())}
+            onRescan={handleBulkRescan}
+            starting={bulkRescan.isPending}
+            progress={bulkStatus}
+          />
           {contentLoading ? (
             <Skeleton className="h-64 w-full" />
           ) : contentTotal === 0 && !contentSearch ? (
@@ -863,6 +915,16 @@ export default function Optimizer() {
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead className="w-10">
+                        <input
+                          type="checkbox"
+                          aria-label="Select all pages on this page of results"
+                          checked={allOnPageSelected}
+                          ref={(el) => { if (el) el.indeterminate = someOnPageSelected && !allOnPageSelected }}
+                          onChange={toggleAllOnPage}
+                          className="h-3.5 w-3.5 cursor-pointer accent-primary"
+                        />
+                      </TableHead>
                       <SortableHeader label="Title" field="title" activeSort={sortBy} activeDir={sortDir} onSort={handleSortHeaderClick} />
                       <TableHead>Site</TableHead>
                       <SortableHeader label="Health Score" field="health_score" activeSort={sortBy} activeDir={sortDir} onSort={handleSortHeaderClick} className="w-40" />
@@ -877,6 +939,15 @@ export default function Optimizer() {
                   <TableBody>
                     {contentRows.map((post) => (
                       <TableRow key={post.id}>
+                        <TableCell>
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${post.title}`}
+                            checked={selected.has(post.id)}
+                            onChange={() => toggleOne(post.id)}
+                            className="h-3.5 w-3.5 cursor-pointer accent-primary"
+                          />
+                        </TableCell>
                         <TableCell>
                           <a href={post.url} target="_blank" rel="noopener noreferrer"
                             className="text-[12px] font-medium text-text-primary dark:text-text-primary-dark hover:text-primary dark:hover:text-primary-dark line-clamp-1">

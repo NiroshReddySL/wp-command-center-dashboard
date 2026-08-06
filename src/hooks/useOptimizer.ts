@@ -477,3 +477,47 @@ export function useRegenerateAI(postId: string) {
     },
   })
 }
+
+export interface BulkRescanProgress {
+  total: number
+  done: number
+  failed: number
+  removed: number
+  running: boolean
+  started_at: string | null
+  finished_at: string | null
+  failures: string[]
+}
+
+/** Rescan a selection in ONE request. Firing the per-post endpoint per row
+ *  means N WordPress fetches, N page fetches and N AI calls launched at
+ *  whatever rate the browser manages — which is what the per-post rate limit
+ *  exists to stop. */
+export function useBulkRescan() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (postIds: string[]) =>
+      post<{ queued: number; skipped: number }>(
+        '/optimizer/content-health/rescan-bulk', { post_ids: postIds }
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['bulk-rescan-status'] }),
+  })
+}
+
+/** Polls only while a batch is in flight, so an idle page is not asking. */
+export function useBulkRescanStatus(active: boolean) {
+  const qc = useQueryClient()
+  return useQuery({
+    queryKey: ['bulk-rescan-status'],
+    queryFn: async () => {
+      const data = await get<BulkRescanProgress>('/optimizer/content-health/rescan-bulk/status')
+      // Rows change as the batch lands, so refresh the table as it goes
+      // rather than only at the end.
+      qc.invalidateQueries({ queryKey: ['content-health'] })
+      return data
+    },
+    refetchInterval: active ? 2_000 : false,
+    enabled: active,
+  })
+}
+
