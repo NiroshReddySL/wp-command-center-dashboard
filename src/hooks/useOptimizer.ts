@@ -500,7 +500,20 @@ export function useBulkRescan() {
       post<{ queued: number; skipped: number }>(
         '/optimizer/content-health/rescan-bulk', { post_ids: postIds }
       ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['bulk-rescan-status'] }),
+    onSuccess: (data, postIds) => {
+      // Seed an in-flight record immediately. Without it the PREVIOUS run's
+      // completed status is still cached, and a watcher that stops on "not
+      // running" stops instantly — before the new batch's first status is
+      // ever fetched, leaving the bar frozen at 0%.
+      qc.setQueryData<BulkRescanProgress>(['bulk-rescan-status'], {
+        total: data.queued ?? postIds.length,
+        done: 0, failed: 0, removed: 0,
+        running: true,
+        started_at: new Date().toISOString(),
+        finished_at: null,
+        failures: [],
+      })
+    },
   })
 }
 

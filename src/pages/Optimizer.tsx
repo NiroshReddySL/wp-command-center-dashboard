@@ -688,11 +688,13 @@ export default function Optimizer() {
   const [watching, setWatching] = useState(false)
   const { data: bulkStatus } = useBulkRescanStatus(watching)
 
-  // Stop polling once the batch settles, so an idle page is not asking.
+  // Stop polling once the batch settles — but only on a result belonging to
+  // the run we started. A previous run's completed record is still cached
+  // when the next batch begins, and stopping on that froze the bar at 0%.
+  const watchFrom = useRef<number>(0)
   useEffect(() => {
-    if (watching && bulkStatus && !bulkStatus.running && bulkStatus.finished_at) {
-      setWatching(false)
-    }
+    if (!watching || !bulkStatus?.finished_at) return
+    if (Date.parse(bulkStatus.finished_at) >= watchFrom.current) setWatching(false)
   }, [watching, bulkStatus])
 
   const pageIds = contentRows.map((p) => p.id)
@@ -719,6 +721,9 @@ export default function Optimizer() {
 
   const handleBulkRescan = async () => {
     if (!selected.size) return
+    // Recorded before the request so any status finishing after this point
+    // belongs to this batch, never to the one before it.
+    watchFrom.current = Date.now()
     await bulkRescan.mutateAsync([...selected])
     setSelected(new Set())
     setWatching(true)
